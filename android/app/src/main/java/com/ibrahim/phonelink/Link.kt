@@ -41,7 +41,7 @@ object Link {
     @Volatile private var lastRecvClip: String? = null
     private val rfiles = HashMap<String, FileOutputStream>()
 
-    private fun setStatus(s: String) { status = s; main.post { onChange?.invoke() } }
+    private fun setStat(s: String) { status = s; main.post { onChange?.invoke() } }
 
     fun approve(ok: Boolean) { approved = ok; confirm?.countDown() }
 
@@ -85,7 +85,7 @@ object Link {
         Thread {
             try {
                 disconnect()
-                setStatus("Connecting...")
+                setStat("Connecting...")
                 val s = Socket(); s.connect(InetSocketAddress(host, PORT), 5000); s.tcpNoDelay = true
                 sock = s
                 val kp = myKeys(c); val myPub = raw65(kp.public)
@@ -99,25 +99,25 @@ object Link {
                 key = SecretKeySpec(sha("phonelink-v2".toByteArray(), shared, nc, ns).copyOf(16), "AES")
                 val trusted = prefs(c).getString("pc", null)
                 val srvB64 = Base64.encodeToString(srvPub, 0)
-                if (trusted != null && trusted != srvB64) { setStatus("REFUSED: this PC is not the one you paired with"); s.close(); return@Thread }
+                if (trusted != null && trusted != srvB64) { setStat("REFUSED: this PC is not the one you paired with"); s.close(); return@Thread }
                 if (trusted == null) {
                     val h = sha("phonelink-sas".toByteArray(), myPub, srvPub)
                     val n = ((h[0].toLong() and 255) shl 24 or ((h[1].toLong() and 255) shl 16) or ((h[2].toLong() and 255) shl 8) or (h[3].toLong() and 255)) % 1000000
                     sasCode = "%06d".format(n)
                     approved = false; confirm = CountDownLatch(1)
-                    setStatus("Compare code with PC: $sasCode")
-                    if (!confirm!!.await(90, TimeUnit.SECONDS) || !approved) { sasCode = null; setStatus("Pairing cancelled"); s.close(); return@Thread }
+                    setStat("Compare code with PC: $sasCode")
+                    if (!confirm!!.await(90, TimeUnit.SECONDS) || !approved) { sasCode = null; setStat("Pairing cancelled"); s.close(); return@Thread }
                     sasCode = null
                     prefs(c).edit().putString("pc", srvB64).apply()
                 }
                 out = os
                 send(JSONObject().put("t", "hello"))
-                setStatus("Connected")
+                setStat("Connected")
                 prefs(c).edit().putString("host", host).apply()
                 watchClipboard(c)
                 while (true) handle(c, JSONObject(String(readFrame(ins))))
             } catch (e: Exception) {
-                setStatus("Disconnected: ${e.message}")
+                setStat("Disconnected: ${e.message}")
             } finally { out = null }
         }.start()
     }
@@ -176,7 +176,7 @@ object Link {
         val name = File(m.optString("name")).name; if (name.isEmpty()) return
         val f = rfiles.getOrPut(name) { FileOutputStream(File(receivedDir(c), name)) }
         f.write(Base64.decode(m.optString("data"), Base64.NO_WRAP))
-        if (m.optBoolean("last")) { f.close(); rfiles.remove(name); setStatus("Received file: $name") }
+        if (m.optBoolean("last")) { f.close(); rfiles.remove(name); setStat("Received file: $name") }
     }
 
     fun sendFile(c: Context, uri: Uri) {
@@ -197,8 +197,8 @@ object Link {
                         if (last) break
                     }
                 }
-                setStatus("Sent file: $name")
-            } catch (e: Exception) { setStatus("Send failed: ${e.message}") }
+                setStat("Sent file: $name")
+            } catch (e: Exception) { setStat("Send failed: ${e.message}") }
         }.start()
     }
 }
