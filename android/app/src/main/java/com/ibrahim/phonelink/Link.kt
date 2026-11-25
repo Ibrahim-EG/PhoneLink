@@ -39,6 +39,18 @@ object Link {
     private val rfiles = HashMap<String, Partial>()
 
     val events = java.util.concurrent.CopyOnWriteArrayList<String>()
+    fun note(s: String) {
+        events.add(0, java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date()) + "  " + s)
+        while (events.size > 30) events.removeAt(events.size - 1)
+        onChange?.invoke()
+    }
+    /** Sends text (shared from another app) to the PC clipboard. */
+    fun sendText(t: String): Boolean {
+        if (!connected) return false
+        Thread { send(JSONObject().put("t", "clip").put("text", t)) }.start()
+        note("Shared text sent to PC (" + t.length + " characters)")
+        return true
+    }
     private fun setStat(s: String) {
         status = s
         events.add(0, java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date()) + "  " + s)
@@ -136,7 +148,7 @@ object Link {
 
     private fun handle(c: Context, m: JSONObject) {
         when (m.optString("t")) {
-            "clip" -> { val t = m.optString("text"); lastRecvClip = t
+            "clip" -> { val t = m.optString("text"); lastRecvClip = t; note("Clipboard received from PC (" + t.length + " characters)")
                 main.post { (c.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("pc", t)) } }
             "file" -> recvFile(c, m)
             "ack" -> acks.onAck(m.optString("id"), m.optBoolean("ok"))
@@ -150,7 +162,7 @@ object Link {
             clipListener?.let { cm.removePrimaryClipChangedListener(it) }
             clipListener = ClipboardManager.OnPrimaryClipChangedListener {
                 val t = cm.primaryClip?.getItemAt(0)?.coerceToText(c)?.toString()
-                if (!t.isNullOrEmpty() && t != lastRecvClip) Thread { send(JSONObject().put("t", "clip").put("text", t)) }.start()
+                if (!t.isNullOrEmpty() && t != lastRecvClip) { note("Clipboard sent to PC (" + t.length + " characters)"); Thread { send(JSONObject().put("t", "clip").put("text", t)) }.start() }
             }
             cm.addPrimaryClipChangedListener(clipListener)
         }
