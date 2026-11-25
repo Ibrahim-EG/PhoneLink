@@ -76,7 +76,7 @@ object Proto {
             return byteArrayOf((len shr 24).toByte(), (len shr 16).toByte(), (len shr 8).toByte(), len.toByte()) + ct
         }
 
-        fun write(o: OutputStream, msg: ByteArray) { val f = frame(msg); synchronized(o) { o.write(f); o.flush() } }
+        fun write(o: OutputStream, msg: ByteArray) { synchronized(o) { val f = frame(msg); o.write(f); o.flush() } }  // counter order = wire order
 
         fun read(ins: DataInputStream): ByteArray {
             val len = ins.readInt(); if (len < 16 || len > (1 shl 20)) throw Exception("bad frame")
