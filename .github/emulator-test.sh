@@ -51,8 +51,7 @@ FAILS=0
 softfail() { FAILS=$((FAILS+1)); echo "RESULT FAIL: $1"; adb logcat -d | tail -40 > shots/logcat-soft-$RANDOM.txt; }
 # PC -> phone clipboard: the phone must log receipt; then try to paste into the address box to see the real clipboard
 echo -n "pc-clip-123" > "$HOME/clip-send.txt"
-python3 .github/e2e.py wait "Clipboard received from PC" 30 || { cat shots/pc.log; softfail "phone did not receive the PC clipboard"; }
-echo "OK PC->phone clipboard receipt logged on the phone"
+if python3 .github/e2e.py wait "Clipboard received from PC" 30; then echo "OK PC->phone clipboard receipt logged on the phone (log receipt only)"; else cat shots/pc.log; softfail "phone did not receive the PC clipboard"; fi
 adb shell input keyevent 279 # KEYCODE_PASTE into the focused address box
 sleep 1
 adb exec-out screencap -p > shots/clip-pc-to-phone.png
@@ -60,16 +59,17 @@ if python3 .github/e2e.py wait "pc-clip-123" 3; then echo "OK real phone clipboa
 # phone -> PC: shared text (this proves the share path, NOT the clipboard listener)
 adb shell am start -n $PKG/.ShareActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT share-hello-1 >/dev/null
 for i in $(seq 1 20); do [ -f "$HOME/clip-recv.txt" ] && grep -q share-hello-1 "$HOME/clip-recv.txt" && break; sleep 1; done
-grep -q share-hello-1 "$HOME/clip-recv.txt" 2>/dev/null || { cat shots/pc.log; softfail "shared text did not reach the PC"; }
-echo "OK phone->PC shared text reached the PC (share path only)"
+if grep -q share-hello-1 "$HOME/clip-recv.txt" 2>/dev/null; then echo "OK phone->PC shared text reached the PC (share path only)"; else cat shots/pc.log; softfail "shared text did not reach the PC"; fi
 # phone -> PC file via the share target
 echo "from the phone" > /tmp/share-test.txt
 adb push /tmp/share-test.txt /sdcard/Android/data/$PKG/files/share-test.txt >/dev/null
 adb shell am start -n $PKG/.ShareActivity -a android.intent.action.SEND -t text/plain --eu android.intent.extra.STREAM file:///sdcard/Android/data/$PKG/files/share-test.txt >/dev/null
 for i in $(seq 1 30); do [ -f "$HOME/Downloads/PhoneLink/Received/share-test.txt" ] && break; sleep 1; done
-[ -f "$HOME/Downloads/PhoneLink/Received/share-test.txt" ] || { cat shots/pc.log; adb logcat -d | tail -40; softfail "phone->PC file did not arrive"; }
-grep -q "from the phone" "$HOME/Downloads/PhoneLink/Received/share-test.txt" || softfail "phone->PC file content wrong"
-echo "OK phone->PC file arrived with correct content"
+if [ -f "$HOME/Downloads/PhoneLink/Received/share-test.txt" ]; then
+  if grep -q "from the phone" "$HOME/Downloads/PhoneLink/Received/share-test.txt"; then echo "OK phone->PC file arrived with correct name and content"; else softfail "phone->PC file content wrong"; fi
+else
+  ls -la "$HOME/Downloads/PhoneLink/Received/" || true; cat shots/pc.log; softfail "phone->PC file did not arrive under its name"
+fi
 adb exec-out screencap -p > shots/phone-to-pc-file.png
 # phone -> PC real clipboard listener: set the phone clipboard through the address box (type, select all, copy)
 echo "UNVERIFIED phone clipboard listener -> PC: no reliable way to copy on Android 7.0 headless, not tested"
