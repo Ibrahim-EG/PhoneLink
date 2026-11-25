@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/cipher"
 	"crypto/ecdh"
+	"crypto/hmac"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -106,7 +107,12 @@ func handle(c net.Conn, g cipher.AEAD) {
 		b, err := readFrame(c, g)
 		if err != nil {
 			fmt.Println("Phone disconnected.")
-			setConnected(false)
+			mu.Lock()
+			if cur == c {
+				cur = nil
+				setConnected(false)
+			}
+			mu.Unlock()
 			return
 		}
 		var m Msg
@@ -151,20 +157,29 @@ var pairMu sync.Mutex
 
 func accept(c net.Conn, priv *ecdh.PrivateKey) {
 	c.SetDeadline(time.Now().Add(90 * time.Second))
-	in := make([]byte, 65+16)
-	if _, err := io.ReadFull(c, in); err != nil {
-		c.Close()
-		return
-	}
-	peerPub, nc := in[:65], in[65:]
-	pk, err := ecdh.P256().NewPublicKey(peerPub)
-	if err != nil {
+	com := make([]byte, 32)
+	if _, err := io.ReadFull(c, com); err != nil {
 		c.Close()
 		return
 	}
 	ns := make([]byte, 16)
 	rand.Read(ns)
 	c.Write(append(append([]byte{}, priv.PublicKey().Bytes()...), ns...))
+	in := make([]byte, 65+16)
+	if _, err := io.ReadFull(c, in); err != nil {
+		c.Close()
+		return
+	}
+	peerPub, nc := in[:65], in[65:]
+	if !hmac.Equal(commit(peerPub, nc), com) {
+		c.Close()
+		return
+	}
+	pk, err := ecdh.P256().NewPublicKey(peerPub)
+	if err != nil {
+		c.Close()
+		return
+	}
 	shared, err := priv.ECDH(pk)
 	if err != nil {
 		c.Close()
@@ -173,7 +188,7 @@ func accept(c net.Conn, priv *ecdh.PrivateKey) {
 	g := deriveKey(shared, nc, ns)
 	if !isTrusted(peerPub) {
 		pairMu.Lock()
-		code := sas(peerPub, priv.PublicKey().Bytes())
+		code := sas(peerPub, priv.PublicKey().Bytes(), nc, ns)
 		fmt.Println("\nNEW PHONE wants to pair. Confirmation code:", code)
 		fmt.Println("Compare it with the phone, then press Accept in the PhoneLink page that opened in your browser.")
 		ok := waitPairing(code)
