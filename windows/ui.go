@@ -110,10 +110,15 @@ func startUI() {
 				if name == "" || name == "." {
 					continue
 				}
-				dst := filepath.Join(outboxDir(), name)
-				if f, err := os.Create(dst); err == nil {
-					io.Copy(f, p)
+				// write to a hidden temp name, rename when complete, so the sender never sees half a file
+				if f, err := os.CreateTemp(outboxDir(), ".upload-*"); err == nil {
+					_, cerr := io.Copy(f, p)
 					f.Close()
+					if cerr == nil {
+						os.Rename(f.Name(), filepath.Join(outboxDir(), uniqueName(outboxDir(), name)))
+					} else {
+						os.Remove(f.Name())
+					}
 				}
 			}
 		}
