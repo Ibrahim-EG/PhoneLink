@@ -20,7 +20,7 @@ func auroraButton(text string, primary bool, onClick func()) Widget {
 		MinSize:             Size{Height: 38},
 		MaxSize:             Size{Height: 38},
 		InvalidatesOnResize: true,
-		PaintMode:           PaintNormal,
+		PaintMode:           PaintBuffered,
 		Paint: func(c *walk.Canvas, _ walk.Rectangle) error {
 			if w != nil {
 				found := false
