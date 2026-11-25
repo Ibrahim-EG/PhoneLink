@@ -174,12 +174,14 @@ object Link {
     fun setExportTree(c: Context, u: Uri) { prefs(c).edit().putString("exportTree", u.toString()).apply() }
 
     /** Copies a received file into the chosen folder. The app-storage copy is kept either way. */
-    private fun exportCopy(c: Context, f: File): Boolean = try {
+    private fun exportCopy(c: Context, f: File): Boolean {
         val tree = exportTree(c) ?: return false
-        val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-        val doc = DocumentsContract.createDocument(c.contentResolver, parent, "application/octet-stream", f.name)
-        if (doc == null) false else { c.contentResolver.openOutputStream(doc)!!.use { o -> f.inputStream().use { it.copyTo(o) } }; true }
-    } catch (e: Exception) { false }
+        return try {
+            val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+            val doc = DocumentsContract.createDocument(c.contentResolver, parent, "application/octet-stream", f.name)
+            if (doc == null) false else { c.contentResolver.openOutputStream(doc)!!.use { o -> f.inputStream().use { it.copyTo(o) } }; true }
+        } catch (e: Exception) { false }
+    }
 
     fun receivedDir(c: Context): File = File(c.getExternalFilesDir(null), "Received").also { it.mkdirs() }
 
