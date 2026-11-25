@@ -92,7 +92,8 @@ jobs:
           using System; using System.Runtime.InteropServices;
           public struct RECT { public int Left, Top, Right, Bottom; }
           public class W { [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
-                           [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); }
+                           [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+                           [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int hh, bool repaint); }
           "@
           $p = Start-Process -FilePath .\exe\PhoneLink.exe -PassThru
           Start-Sleep -Seconds 8
@@ -117,12 +118,15 @@ jobs:
           # Motion check on the TEST-ONLY sample build (fake pairing code, not a real pairing): record the window region as video
           $p = Start-Process -FilePath .\exe-sample\PhoneLink-sample.exe -PassThru
           Start-Sleep -Seconds 6
+          [W]::MoveWindow($p.MainWindowHandle, 0, 0, 500, 660, $true) | Out-Null
           [W]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
-          Start-Sleep -Seconds 1
+          Start-Sleep -Seconds 2
           choco install ffmpeg -y --no-progress | Select-Object -Last 2
           $ff = (Get-Command ffmpeg).Source
           $r = New-Object RECT; [W]::GetWindowRect($p.MainWindowHandle, [ref]$r) | Out-Null
           $w = $r.Right - $r.Left; $h = $r.Bottom - $r.Top; $w -= $w % 2; $h -= $h % 2
+          "window rect: $($r.Left),$($r.Top) ${w}x${h}; screen: $([System.Windows.Forms.Screen]::PrimaryScreen.Bounds)"
+          if ($r.Left -lt 0 -or $r.Top -lt 0 -or $r.Left + $w -gt [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width -or $r.Top + $h -gt [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height) { Write-Error "window does not fit on the screen"; exit 1 }
           $rec = Start-Process -FilePath $ff -ArgumentList "-y -f gdigrab -framerate 30 -offset_x $($r.Left) -offset_y $($r.Top) -video_size ${w}x${h} -draw_mouse 1 -i desktop -t 8 -c:v libx264 -preset ultrafast -pix_fmt yuv420p $PWD\shots\window-motion.mp4" -PassThru -NoNewWindow -RedirectStandardError $PWD\shots\ffmpeg-rec.log
           Start-Sleep -Seconds 1
           for ($i = 0; $i -lt 180; $i++) {
