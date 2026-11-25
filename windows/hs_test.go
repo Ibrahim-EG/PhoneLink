@@ -25,7 +25,7 @@ func TestHandshake(t *testing.T) {
 	if err != nil || string(m) != "hello" {
 		t.Fatal(err, string(m))
 	}
-	if sas(cli.PublicKey().Bytes(), srv.PublicKey().Bytes()) == "" {
+	if sas(cli.PublicKey().Bytes(), srv.PublicKey().Bytes(), nc, ns) == "" {
 		t.Fatal("sas")
 	}
 	// wrong key must fail
