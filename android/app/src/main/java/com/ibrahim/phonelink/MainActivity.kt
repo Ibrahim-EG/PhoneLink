@@ -20,6 +20,7 @@ class MainActivity : Activity() {
         fun btn(t: String, a: () -> Unit) = Button(this).also { it.text = t; it.setOnClickListener { a() }; l.addView(it) }
         l.addView(host)
         btn("Connect") { startService(Intent(this, LinkService::class.java)); Link.connect(applicationContext, host.text.toString().trim().substringBefore(":")) }
+        btn("Disconnect") { Link.stop() }
         btn("Send a file to PC") { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE), 1) }
         btn("Allow notification sharing") { startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) }
         confirmRow = LinearLayout(this)
