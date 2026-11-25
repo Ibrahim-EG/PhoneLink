@@ -120,7 +120,7 @@ func recvFile(m Msg) {
 		delete(rcv, name)
 		final := uniqueName(inboxDir(), name)
 		if os.Rename(p.path, filepath.Join(inboxDir(), final)) == nil {
-			fmt.Println("Received file:", final)
+			logln("Received file:", final)
 			go toast("File received", final)
 			if m.ID != "" {
 				doneAdd(m.ID)
@@ -186,7 +186,7 @@ func sendFile(path string) bool {
 			return false
 		}
 		if e := send(Msg{T: "file", Name: name, ID: id, Data: base64.StdEncoding.EncodeToString(buf[:n]), Last: last}); e != nil {
-			fmt.Println("Send interrupted, will retry when the phone reconnects:", name)
+			logln("Send interrupted, will retry when the phone reconnects:", name)
 			return false
 		}
 		if last {
@@ -197,13 +197,13 @@ func sendFile(path string) bool {
 	select {
 	case ok := <-ch:
 		if ok {
-			fmt.Println("Delivered (confirmed by phone):", name)
+			logln("Delivered (confirmed by phone):", name)
 		} else {
-			fmt.Println("Phone could not save:", name)
+			logln("Phone could not save:", name)
 		}
 		return ok
 	case <-time.After(ackWait):
-		fmt.Println("Sent but NOT confirmed by the phone, kept in Send folder:", name)
+		logln("Sent but NOT confirmed by the phone, kept in Send folder:", name)
 		return false
 	}
 }
@@ -255,7 +255,7 @@ func outboxWatcher() {
 				os.MkdirAll(d, 0700)
 				os.Rename(p, filepath.Join(d, uniqueName(d, e.Name())))
 				msg := fmt.Sprintf("%s was not confirmed by the phone after %d tries. It may or may not have arrived. Moved to Send\\failed.", e.Name(), maxAttempts)
-				fmt.Println(msg)
+				logln(msg)
 				go toast("File not delivered", msg)
 				delete(tries, id)
 			} else {
