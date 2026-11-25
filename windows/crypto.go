@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // Handshake (both sides keep a long-term P-256 key):
@@ -21,7 +22,7 @@ import (
 //  3. first pairing only: both screens show a 6-digit code derived from both public keys;
 //     the user compares them and approves on both devices (blocks a man in the middle).
 //  4. each side remembers the other's public key; a different key later is refused.
-// Data frames: 4-byte length | 12-byte nonce | AES-128-GCM ciphertext.
+// Data frames: see Session (AES-128-GCM, counter nonces, direction-separated).
 
 func loadKey() *ecdh.PrivateKey {
 	dir, _ := os.UserConfigDir()
@@ -58,41 +59,71 @@ func sas(clientPub, serverPub, nc, ns []byte) string {
 	return fmt.Sprintf("%06d", binary.BigEndian.Uint32(s[:4])%1000000)
 }
 
-func deriveKey(shared, nc, ns []byte) cipher.AEAD {
+func deriveKeyBytes(shared, nc, ns []byte) []byte {
 	h := sha256.New()
 	h.Write([]byte("phonelink-v2"))
 	h.Write(shared)
 	h.Write(nc)
 	h.Write(ns)
-	b, _ := aes.NewCipher(h.Sum(nil)[:16])
+	return h.Sum(nil)[:16]
+}
+
+func deriveKey(shared, nc, ns []byte) cipher.AEAD {
+	b, _ := aes.NewCipher(deriveKeyBytes(shared, nc, ns))
 	g, _ := cipher.NewGCM(b)
 	return g
 }
 
-func writeFrame(w io.Writer, g cipher.AEAD, msg []byte) error {
-	nonce := make([]byte, 12)
-	rand.Read(nonce)
-	ct := g.Seal(nil, nonce, msg, nil)
-	buf := make([]byte, 4, 4+12+len(ct))
-	binary.BigEndian.PutUint32(buf, uint32(12+len(ct)))
-	buf = append(buf, nonce...)
+// Session numbers every frame. The GCM nonce is direction (1 byte) | 3 zero bytes | 8-byte counter,
+// built by each side from its own counters and never sent. A replayed, dropped, reordered or
+// reflected frame therefore fails authentication.
+// Direction: 0 = client (phone) to server (PC), 1 = server to client.
+type Session struct {
+	g      cipher.AEAD
+	dir    byte
+	sn, rn uint64
+	wmu    sync.Mutex
+}
+
+func newSession(g cipher.AEAD, dir byte) *Session { return &Session{g: g, dir: dir} }
+
+func nonceFor(dir byte, n uint64) []byte {
+	b := make([]byte, 12)
+	b[0] = dir
+	binary.BigEndian.PutUint64(b[4:], n)
+	return b
+}
+
+// frame: 4-byte big-endian length | ciphertext (includes 16-byte GCM tag)
+func (s *Session) Write(w io.Writer, msg []byte) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	ct := s.g.Seal(nil, nonceFor(s.dir, s.sn), msg, nil)
+	s.sn++
+	buf := make([]byte, 4, 4+len(ct))
+	binary.BigEndian.PutUint32(buf, uint32(len(ct)))
 	buf = append(buf, ct...)
 	_, err := w.Write(buf)
 	return err
 }
 
-func readFrame(r io.Reader, g cipher.AEAD) ([]byte, error) {
+func (s *Session) Read(r io.Reader) ([]byte, error) {
 	h := make([]byte, 4)
 	if _, err := io.ReadFull(r, h); err != nil {
 		return nil, err
 	}
 	n := binary.BigEndian.Uint32(h)
-	if n < 28 || n > 1<<20 {
+	if n < 16 || n > 1<<20 {
 		return nil, errors.New("bad frame")
 	}
 	b := make([]byte, n)
 	if _, err := io.ReadFull(r, b); err != nil {
 		return nil, err
 	}
-	return g.Open(nil, b[:12], b[12:], nil)
+	p, err := s.g.Open(nil, nonceFor(1-s.dir, s.rn), b, nil)
+	if err != nil {
+		return nil, err
+	}
+	s.rn++
+	return p, nil
 }
