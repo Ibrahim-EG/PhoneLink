@@ -38,6 +38,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { name: phonelink-android-apk, path: apk }
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22' }
+      - name: Build PC app for the end-to-end test (test-only build, auto-accepts pairing)
+        run: cd windows && go build -tags e2e -o ../pc-e2e .
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
