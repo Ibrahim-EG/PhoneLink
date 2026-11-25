@@ -40,6 +40,7 @@ func runGUI(l net.Listener) {
 	var statusLbl, codeLbl *walk.Label
 	var pairBox *walk.Composite
 	var logBox *walk.TextEdit
+	lastLog := ""
 	var header *walk.CustomWidget
 	au := NewAurora()
 	var hdrW, hdrH int
@@ -63,7 +64,7 @@ func runGUI(l net.Listener) {
 				MaxSize:             Size{Height: 150},
 				ClearsBackground:    false,
 				InvalidatesOnResize: true,
-				PaintMode:           PaintNormal,
+				PaintMode:           PaintBuffered,
 				Paint: func(canvas *walk.Canvas, _ walk.Rectangle) error {
 					b := header.ClientBoundsPixels()
 					hdrW, hdrH = b.Width, b.Height
@@ -201,7 +202,10 @@ func runGUI(l net.Listener) {
 		} else if pairBox.Visible() {
 			pairBox.SetVisible(false)
 		}
-		logBox.SetText(strings.Join(st.Events, "\r\n"))
+		if txt := strings.Join(st.Events, "\r\n"); txt != lastLog {
+			lastLog = txt
+			logBox.SetText(txt)
+		}
 	}
 	refresh()
 	go func() { // slow refresh of state
