@@ -67,7 +67,7 @@ func runGUI(l net.Listener) {
 				Paint: func(canvas *walk.Canvas, _ walk.Rectangle) error {
 					b := header.ClientBoundsPixels()
 					hdrW, hdrH = b.Width, b.Height
-					img := au.Render(b.Width/3+1, b.Height/3+1)
+					img := au.Render(b.Width/2+1, b.Height/2+1)
 					bmp, err := walk.NewBitmapFromImageForDPI(img, 96)
 					if err != nil {
 						return err
@@ -143,7 +143,7 @@ func runGUI(l net.Listener) {
 						},
 					},
 					Label{Text: "Recent activity", TextColor: cMuted},
-					TextEdit{AssignTo: &logBox, ReadOnly: true, VScroll: true, MinSize: Size{Height: 120}},
+					TextEdit{AssignTo: &logBox, ReadOnly: true, VScroll: true, MinSize: Size{Height: 120}, Background: SolidColorBrush{Color: walk.RGB(10, 9, 32)}, TextColor: walk.RGB(200, 225, 250)},
 				},
 			},
 		},
