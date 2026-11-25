@@ -41,9 +41,11 @@ object Link {
 
     val events = java.util.concurrent.CopyOnWriteArrayList<String>()
     fun note(s: String) {
+        android.util.Log.i("PhoneLinkNote", s)
         events.add(0, java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date()) + "  " + s)
         while (events.size > 30) events.removeAt(events.size - 1)
-        onChange?.invoke()
+        // note() is called from the connection thread; views may only be touched on the main thread
+        main.post { onChange?.invoke() }
     }
     /** Sends text (shared from another app) to the PC clipboard. */
     fun sendText(t: String): Boolean {
@@ -133,6 +135,7 @@ object Link {
             watchClipboard(c)
             while (true) handle(c, JSONObject(String(sess.read(ins))))
         } catch (e: Exception) {
+            android.util.Log.w("PhoneLinkNote", "connection loop ended: " + e.javaClass.name + ": " + e.message)
             setStat("Disconnected, retrying... (${e.message})")
         } finally { out = null; session = null; abortReceives() }
         return true
@@ -150,7 +153,7 @@ object Link {
     private fun handle(c: Context, m: JSONObject) {
         when (m.optString("t")) {
             "clip" -> { val t = m.optString("text"); lastRecvClip = t; note("Clipboard received from PC (" + t.length + " characters)")
-                main.post { (c.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("pc", t)) } }
+                main.post { try { (c.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("pc", t)); android.util.Log.i("PhoneLinkNote", "setPrimaryClip done") } catch (e: Exception) { android.util.Log.w("PhoneLinkNote", "setPrimaryClip failed: " + e) } } }
             "file" -> recvFile(c, m)
             "ack" -> acks.onAck(m.optString("id"), m.optBoolean("ok"))
         }
