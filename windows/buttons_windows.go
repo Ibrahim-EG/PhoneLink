@@ -57,6 +57,14 @@ func auroraButton(text string, primary bool, onClick func()) Widget {
 				return err
 			}
 			defer pen.Dispose()
+			bg, err := walk.NewSolidColorBrush(cBody)
+			if err != nil {
+				return err
+			}
+			defer bg.Dispose()
+			if err := c.FillRectanglePixels(bg, b); err != nil {
+				return err
+			}
 			r := walk.Rectangle{X: 1, Y: 1, Width: b.Width - 2, Height: b.Height - 2}
 			if err := c.FillRoundedRectanglePixels(br, r, walk.Size{Width: 12, Height: 12}); err != nil {
 				return err
