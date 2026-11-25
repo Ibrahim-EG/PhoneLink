@@ -33,7 +33,7 @@ func TestPairingAndFile(t *testing.T) {
 	go a.Write(append(append([]byte{}, cli.PublicKey().Bytes()...), nc...))
 	spk, _ := ecdh.P256().NewPublicKey(resp[:65])
 	sh, _ := cli.ECDH(spk)
-	g := deriveKey(sh, nc, resp[65:])
+	g := newSession(deriveKey(sh, nc, resp[65:]), 0)
 
 	// wait for pending pairing, check the code matches, approve
 	var code string
@@ -51,7 +51,7 @@ func TestPairingAndFile(t *testing.T) {
 	if code != sas(cli.PublicKey().Bytes(), srvPriv.PublicKey().Bytes(), nc, resp[65:]) {
 		t.Fatalf("code mismatch %q", code)
 	}
-	if err := writeFrame(a, g, []byte(`{"t":"hello"}`)); err != nil {
+	if err := g.Write(a, []byte(`{"t":"hello"}`)); err != nil {
 		t.Fatal(err)
 	}
 	data := make([]byte, 500000) // spans two chunks worth of size
@@ -63,7 +63,7 @@ func TestPairingAndFile(t *testing.T) {
 			end = len(data)
 		}
 		m, _ := json.Marshal(Msg{T: "file", Name: "../evil/test.bin", Data: base64.StdEncoding.EncodeToString(data[off:end]), Last: last})
-		if err := writeFrame(a, g, m); err != nil {
+		if err := g.Write(a, m); err != nil {
 			t.Fatal(err)
 		}
 	}
