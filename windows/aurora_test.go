@@ -22,8 +22,13 @@ func TestAuroraMovesAndReacts(t *testing.T) {
 		t.Fatal("click ripple changed nothing")
 	}
 	// deep blue/violet, never solid or black
-	c := f1.RGBAAt(40, 15)
-	if c.B < 60 || c.B < c.G {
-		t.Fatalf("unexpected base colour %v", c)
+	var sr, sg, sb int
+	for i := 0; i < len(f1.Pix); i += 4 {
+		sr += int(f1.Pix[i])
+		sg += int(f1.Pix[i+1])
+		sb += int(f1.Pix[i+2])
+	}
+	if sb <= sg || sb <= sr || sb/(len(f1.Pix)/4) < 50 {
+		t.Fatalf("frame is not blue-violet dominated: r=%d g=%d b=%d", sr, sg, sb)
 	}
 }
