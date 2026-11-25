@@ -1,0 +1,40 @@
+name: emulator-test
+# Test-only workflow: runs the emulator end-to-end test against an EXISTING release APK. It builds no app and publishes no release.
+on: workflow_dispatch
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the existing build-100 APK (no rebuild)
+        run: |
+          mkdir -p apk
+          curl -sSL -o apk/PhoneLink.apk "https://github.com/${{ github.repository }}/releases/download/build-100/PhoneLink.apk"
+          sha256sum apk/PhoneLink.apk
+          echo "bc1b8de136f31687d5c60db38e15b926444ad94f39b9902580b0cfb1f4fdce1d  apk/PhoneLink.apk" | sha256sum -c -
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22' }
+      - name: Build PC app for the end-to-end test (test-only build, auto-accepts pairing)
+        run: cd windows && go build -tags e2e -o ../pc-e2e .
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 24
+          arch: x86
+          target: default
+          disable-animations: true
+          script: bash .github/emulator-test.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: emulator-screens, path: shots }
+      - name: Publish screenshots and the test output (public prerelease ci-evidence, not an app build)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view ci-evidence --repo "${{ github.repository }}" >/dev/null 2>&1 || gh release create ci-evidence --repo "${{ github.repository }}" --prerelease --title "CI evidence (screenshots)" --notes "Screenshots from CI test runs. Not an app build."
+          for f in shots/*.png shots/ui-*.txt shots/folder-find.txt shots/test-output.txt; do [ -e "$f" ] && cp "$f" "emutest${{ github.run_number }}-$(basename $f)" && gh release upload ci-evidence "emutest${{ github.run_number }}-$(basename $f)" --repo "${{ github.repository }}" --clobber; done; true
