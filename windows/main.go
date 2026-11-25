@@ -1,12 +1,12 @@
 package main
 
 import (
-	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/hmac"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -33,7 +33,7 @@ const port = 47800
 var (
 	mu       sync.Mutex
 	cur      net.Conn
-	gcm      cipher.AEAD
+	sess     *Session
 	lastRecv string
 )
 
@@ -62,17 +62,19 @@ $t.Item(1).AppendChild($x.CreateTextNode('` + esc(body) + `')) | Out-Null
 	exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps).Run()
 }
 
-func send(m Msg) {
+func send(m Msg) error {
 	mu.Lock()
-	c, g := cur, gcm
+	c, g := cur, sess
 	mu.Unlock()
 	if c == nil {
-		return
+		return errors.New("not connected")
 	}
 	b, _ := json.Marshal(m)
-	if err := writeFrame(c, g, b); err != nil {
+	if err := g.Write(c, b); err != nil {
 		c.Close()
+		return err
 	}
+	return nil
 }
 
 func clipWatcher() {
@@ -94,19 +96,20 @@ func clipWatcher() {
 	}
 }
 
-func handle(c net.Conn, g cipher.AEAD) {
+func handle(c net.Conn, g *Session) {
 	mu.Lock()
 	if cur != nil {
 		cur.Close()
 	}
-	cur, gcm = c, g
+	cur, sess = c, g
 	mu.Unlock()
 	fmt.Println("Phone connected:", c.RemoteAddr())
 	setConnected(true)
 	for {
-		b, err := readFrame(c, g)
+		b, err := g.Read(c)
 		if err != nil {
 			fmt.Println("Phone disconnected.")
+			abortReceives()
 			mu.Lock()
 			if cur == c {
 				cur = nil
@@ -185,7 +188,7 @@ func accept(c net.Conn, priv *ecdh.PrivateKey) {
 		c.Close()
 		return
 	}
-	g := deriveKey(shared, nc, ns)
+	g := newSession(deriveKey(shared, nc, ns), 1)
 	if !isTrusted(peerPub) {
 		pairMu.Lock()
 		code := sas(peerPub, priv.PublicKey().Bytes(), nc, ns)
@@ -199,7 +202,7 @@ func accept(c net.Conn, priv *ecdh.PrivateKey) {
 		}
 		trust(peerPub)
 	}
-	b, err := readFrame(c, g)
+	b, err := g.Read(c)
 	if err != nil || string(b) != `{"t":"hello"}` {
 		c.Close()
 		return
