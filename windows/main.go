@@ -132,9 +132,6 @@ func handle(c net.Conn, g *Session) {
 			mu.Unlock()
 			logln("Clipboard received from phone (", len(m.Text), "characters)")
 			setClip(m.Text)
-		case "notif":
-			logln("Notification from phone:", m.App+":", m.Title)
-			go toast(m.App+": "+m.Title, m.Text)
 		case "file":
 			recvFile(m)
 		case "ack":
