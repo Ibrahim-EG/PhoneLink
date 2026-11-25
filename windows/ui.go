@@ -70,8 +70,10 @@ func page(w http.ResponseWriter) {
 		fmt.Fprintf(w, "<li>%s</li>", html.EscapeString(es[i].Name()))
 	}
 	fmt.Fprint(w, "</ul><p style=color:#666>Clipboard text and notifications sync automatically while connected.</p>")
-	fmt.Fprint(w, `<script>var last=null;setInterval(function(){fetch('/state').then(r=>r.text()).then(function(t){
-if(last!==null&&t!==last){var f=document.querySelector('input[type=file]');if(!f||!f.files.length)location.reload();}last=t;});},2000);</script>`)
+	fmt.Fprint(w, `<script>var last=null,dirty=false;setInterval(function(){fetch('/state').then(r=>r.text()).then(function(t){
+if(last!==null&&t!==last)dirty=true;last=t;
+var f=document.querySelector('input[type=file]');
+if(dirty&&(!f||!f.files.length))location.reload();});},2000);</script>`)
 }
 
 func startUI() {
