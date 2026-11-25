@@ -15,7 +15,8 @@ import (
 )
 
 // Handshake (both sides keep a long-term P-256 key):
-//  1. each side sends: 65-byte public key | 16-byte random nonce
+//  0. client first sends a 32-byte commitment to its key and nonce (see commit)
+//  1. server sends: 65-byte public key | 16-byte nonce; then client reveals its own key | nonce
 //  2. shared = ECDH(myPriv, peerPub); key = SHA256("phonelink-v2" | shared | nonceClient | nonceServer)[:16]
 //  3. first pairing only: both screens show a 6-digit code derived from both public keys;
 //     the user compares them and approves on both devices (blocks a man in the middle).
@@ -36,11 +37,23 @@ func loadKey() *ecdh.PrivateKey {
 	return k
 }
 
-func sas(clientPub, serverPub []byte) string {
+// commit = SHA256(clientPub | clientNonce). The client sends it BEFORE seeing the server's key,
+// so a man in the middle cannot grind keys until both screens show the same code.
+func commit(pub, nonce []byte) []byte {
+	h := sha256.New()
+	h.Write([]byte("phonelink-commit"))
+	h.Write(pub)
+	h.Write(nonce)
+	return h.Sum(nil)
+}
+
+func sas(clientPub, serverPub, nc, ns []byte) string {
 	h := sha256.New()
 	h.Write([]byte("phonelink-sas"))
 	h.Write(clientPub)
 	h.Write(serverPub)
+	h.Write(nc)
+	h.Write(ns)
 	s := h.Sum(nil)
 	return fmt.Sprintf("%06d", binary.BigEndian.Uint32(s[:4])%1000000)
 }
