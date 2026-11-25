@@ -101,7 +101,7 @@ func runGUI(l net.Listener) {
 				Children: []Widget{
 					Label{AssignTo: &statusLbl, Text: "Waiting for the phone", TextColor: cText, Font: f(13, true)},
 					Label{Text: "Type this PC address in the phone app:", TextColor: cMuted},
-					LineEdit{Text: addressText(), ReadOnly: true, Font: f(14, true)},
+					LineEdit{Text: addressText(), ReadOnly: true, Font: f(14, true), Background: SolidColorBrush{Color: walk.RGB(10, 9, 32)}, TextColor: walk.RGB(228, 240, 255)},
 					Composite{
 						AssignTo:   &pairBox,
 						Visible:    false,
