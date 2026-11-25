@@ -105,12 +105,12 @@ func handle(c net.Conn, g *Session) {
 	}
 	cur, sess = c, g
 	mu.Unlock()
-	fmt.Println("Phone connected:", c.RemoteAddr())
+	logln("Phone connected:", c.RemoteAddr())
 	setConnected(true)
 	for {
 		b, err := g.Read(c)
 		if err != nil {
-			fmt.Println("Phone disconnected.")
+			logln("Phone disconnected.")
 			abortReceives()
 			mu.Lock()
 			if cur == c {
@@ -196,8 +196,8 @@ func accept(c net.Conn, priv *ecdh.PrivateKey) {
 	if !isTrusted(peerPub) {
 		pairMu.Lock()
 		code := sas(peerPub, priv.PublicKey().Bytes(), nc, ns)
-		fmt.Println("\nNEW PHONE wants to pair. Confirmation code:", code)
-		fmt.Println("Compare it with the phone, then press Accept in the PhoneLink page that opened in your browser.")
+		logln("\nNEW PHONE wants to pair. Confirmation code:", code)
+		logln("Compare it with the phone, then press Accept in the PhoneLink window.")
 		ok := waitPairing(code)
 		pairMu.Unlock()
 		if !ok {
@@ -216,28 +216,29 @@ func accept(c net.Conn, priv *ecdh.PrivateKey) {
 }
 
 func main() {
-	priv := loadKey()
-	fmt.Println("PhoneLink (Windows)")
-	for _, ip := range localIPs() {
-		fmt.Printf("PC address: %s:%d\n", ip, port)
-	}
-	fmt.Println("Enter the PC address in the phone app. Keep this window open.")
-	go clipWatcher()
-	go startUI()
-	go outboxWatcher()
-	fmt.Println("Received files go to:", inboxDir())
-	fmt.Println("Drop files into this folder to send them to the phone:", outboxDir())
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		fmt.Println("Cannot listen:", err)
-		time.Sleep(10 * time.Second)
+	if len(os.Args) == 3 && os.Args[1] == "-write-ico" { // build step: exe icon
+		os.WriteFile(os.Args[2], writeICO([]int{16, 32, 48, 256}), 0644)
 		return
 	}
-	for {
-		c, err := l.Accept()
-		if err != nil {
-			continue
-		}
-		go accept(c, priv)
+	priv := loadKey()
+	logln("PhoneLink started")
+	go clipWatcher()
+	go outboxWatcher()
+	logln("Received files go to:", inboxDir())
+	logln("Files in this folder are sent to the phone:", outboxDir())
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		logln("Cannot listen on the network port:", err)
+	} else {
+		go func() {
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					continue
+				}
+				go accept(c, priv)
+			}
+		}()
 	}
+	runGUI(l)
 }
