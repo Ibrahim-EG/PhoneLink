@@ -31,6 +31,14 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -H windowsgui" -o PhoneLink.exe .
       - uses: actions/upload-artifact@v4
         with: { name: phonelink-windows, path: windows/PhoneLink.exe }
+      - name: Guard - the release exe must not contain the sample pairing code or auto-accept
+        shell: bash
+        run: |
+          cd windows
+          GOOS=windows GOARCH=amd64 go build -tags sample -ldflags "-s -w -H windowsgui" -o /tmp/ctl-sample.exe .
+          grep -c "(SAMPLE)" /tmp/ctl-sample.exe | grep -qv '^0$' || { echo "control failed: sample build lacks the marker"; exit 1; }
+          if grep -q "(SAMPLE)" PhoneLink.exe; then echo "release exe contains the sample marker"; exit 1; fi
+          echo "OK release exe has no sample marker (control build does)"
       - name: Test-only sample build (layout screenshots, fake pairing code, never released)
         run: cd windows && GOOS=windows GOARCH=amd64 go build -tags sample -ldflags "-s -w -H windowsgui" -o PhoneLink-sample.exe .
       - uses: actions/upload-artifact@v4
@@ -106,33 +114,34 @@ jobs:
           Start-Sleep -Seconds 3
           Shot "window2"
           $p.Kill()
-          # Motion check on the TEST-ONLY sample build: sweep the pointer over the window and sample frames
+          # Motion check on the TEST-ONLY sample build (fake pairing code, not a real pairing): record the window region as video
           $p = Start-Process -FilePath .\exe-sample\PhoneLink-sample.exe -PassThru
           Start-Sleep -Seconds 6
           [W]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
           Start-Sleep -Seconds 1
+          choco install ffmpeg -y --no-progress | Select-Object -Last 2
+          $ff = (Get-Command ffmpeg).Source
           $r = New-Object RECT; [W]::GetWindowRect($p.MainWindowHandle, [ref]$r) | Out-Null
-          $w = $r.Right - $r.Left; $h = $r.Bottom - $r.Top
-          $rep = @("frame,whitePct,sampledPixels")
-          $maxWhite = 0.0
-          for ($i = 0; $i -lt 40; $i++) {
-            $x = $r.Left + 40 + (($i * 11) % ($w - 80)); $y = $r.Top + 40 + (($i * 17) % ($h - 80))
+          $w = $r.Right - $r.Left; $h = $r.Bottom - $r.Top; $w -= $w % 2; $h -= $h % 2
+          $rec = Start-Process -FilePath $ff -ArgumentList "-y -f gdigrab -framerate 30 -offset_x $($r.Left) -offset_y $($r.Top) -video_size ${w}x${h} -draw_mouse 1 -i desktop -t 8 -c:v libx264 -preset ultrafast -pix_fmt yuv420p shots\window-motion.mp4" -PassThru -NoNewWindow -RedirectStandardError shots\ffmpeg-rec.log
+          Start-Sleep -Seconds 1
+          for ($i = 0; $i -lt 180; $i++) {
+            $x = $r.Left + 40 + [int](($w - 80) * (0.5 + 0.45 * [math]::Sin($i / 9.0)))
+            $y = $r.Top + 40 + [int](($h - 80) * (0.5 + 0.45 * [math]::Sin($i / 13.0 + 1.0)))
             [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point $x, $y
-            Start-Sleep -Milliseconds 90
-            $bmp = New-Object System.Drawing.Bitmap $w, $h
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.CopyFromScreen($r.Left, $r.Top, 0, 0, (New-Object System.Drawing.Size $w, $h))
-            $n = 0; $wh = 0
-            for ($yy = 40; $yy -lt $h - 8; $yy += 6) { for ($xx = 8; $xx -lt $w - 8; $xx += 6) {
-              $c = $bmp.GetPixel($xx, $yy); $n++
-              if ($c.R -gt 235 -and $c.G -gt 235 -and $c.B -gt 235) { $wh++ } } }
-            $pct = [math]::Round(100.0 * $wh / $n, 2); if ($pct -gt $maxWhite) { $maxWhite = $pct }
-            $rep += "$i,$pct,$n"
-            if ($i -in 0, 10, 20, 30) { $bmp.Save("shots\sample-frame$i.png") }
+            Start-Sleep -Milliseconds 35
           }
-          $rep += "MAX white pixel percent over 40 frames: $maxWhite"
+          $rec.WaitForExit(20000) | Out-Null
+          # per-frame mean brightness of the header strip (a white erase would spike it)
+          & $ff -hide_banner -i shots\window-motion.mp4 -vf "crop=iw:130:0:40,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=yavg.txt" -f null - 2> shots\ffmpeg-stats.log
+          $v = @(Get-Content yavg.txt | Where-Object { $_ -match 'YAVG=' } | ForEach-Object { [double]($_ -replace '.*YAVG=', '') })
+          $d = 0.0; for ($i = 1; $i -lt $v.Count; $i++) { $q = [math]::Abs($v[$i] - $v[$i-1]); if ($q -gt $d) { $d = $q } }
+          $m = $v | Measure-Object -Minimum -Maximum -Average
+          $rep = @("frames: $($v.Count)", "header-strip mean brightness (0-255): min $([math]::Round($m.Minimum,1)) avg $([math]::Round($m.Average,1)) max $([math]::Round($m.Maximum,1))", "largest frame-to-frame change: $([math]::Round($d,1))", "SAMPLE build with a made-up pairing code; recording is of the window region only")
+          $v | ForEach-Object { [math]::Round($_,1) } | Out-File shots\header-brightness-per-frame.txt
           $rep | Out-File shots\motion-report.txt -Encoding utf8
-          $rep | Select-Object -Last 1
+          $rep
+          foreach ($t in 1, 2.5, 4, 5.5) { & $ff -hide_banner -loglevel error -y -ss $t -i shots\window-motion.mp4 -frames:v 1 "shots\sample-t$t.png" }
           $p.Kill()
       - name: Publish screenshots
         if: always()
@@ -141,14 +150,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view ci-evidence --repo "${{ github.repository }}" >/dev/null 2>&1 || gh release create ci-evidence --repo "${{ github.repository }}" --prerelease --title "CI evidence (screenshots)" --notes "Screenshots from CI test runs. Not an app build."
-          for f in shots/*.png shots/*.txt; do [ -e "$f" ] && cp "$f" "windows-run${{ github.run_number }}-$(basename $f)" && gh release upload ci-evidence "windows-run${{ github.run_number }}-$(basename $f)" --repo "${{ github.repository }}" --clobber; done; true
+          for f in shots/*.png shots/*.txt shots/*.mp4; do [ -e "$f" ] && cp "$f" "windows-run${{ github.run_number }}-$(basename $f)" && gh release upload ci-evidence "windows-run${{ github.run_number }}-$(basename $f)" --repo "${{ github.repository }}" --clobber; done; true
   release:
     needs: [android, windows, emulator, winshot]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
-        with: { path: out, merge-multiple: true }
+        with: { name: phonelink-android-apk, path: out }
+      - uses: actions/download-artifact@v4
+        with: { name: phonelink-windows, path: out }
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
