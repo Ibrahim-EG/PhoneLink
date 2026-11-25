@@ -77,6 +77,7 @@ if __name__ == "__main__":
                 adb("shell", "input", "tap", str(x), str(y))
                 print("tapped:", hit.get("text") or hit.get("content-desc"))
                 sys.exit(0)
+            if _ >= 1: adb("shell", "input", "swipe", "160", "450", "160", "150", "300")
             time.sleep(1)
         sys.exit("nothing matched " + sys.argv[2])
     elif cmd == "longpress_host":
