@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -24,9 +26,25 @@ type partial struct {
 }
 
 var (
-	rmu sync.Mutex
-	rcv = map[string]*partial{}
+	rmu  sync.Mutex
+	rcv  = map[string]*partial{}
+	done = map[string]bool{} // transfer ids already completed (a retry is acknowledged, not duplicated)
+
+	amu  sync.Mutex
+	acks = map[string]chan bool{}
 )
+
+func ackReceived(id string, ok bool) {
+	amu.Lock()
+	ch := acks[id]
+	amu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- ok:
+		default:
+		}
+	}
+}
 
 // Files arrive into a hidden ".part" file and only get their real name when the last chunk
 // has been written. A dropped connection deletes unfinished parts, so no half file is ever
@@ -38,6 +56,12 @@ func recvFile(m Msg) {
 	}
 	rmu.Lock()
 	defer rmu.Unlock()
+	if m.ID != "" && done[m.ID] {
+		if m.Last {
+			go send(Msg{T: "ack", ID: m.ID, Name: name, Ok: true})
+		}
+		return
+	}
 	p := rcv[name]
 	if p == nil {
 		f, err := os.CreateTemp(inboxDir(), ".incoming-*.part")
@@ -67,6 +91,13 @@ func recvFile(m Msg) {
 		if os.Rename(p.path, filepath.Join(inboxDir(), final)) == nil {
 			fmt.Println("Received file:", final)
 			go toast("File received", final)
+			if m.ID != "" {
+				done[m.ID] = true
+			}
+			go send(Msg{T: "ack", ID: m.ID, Name: name, Ok: true})
+		} else {
+			os.Remove(p.path)
+			go send(Msg{T: "ack", ID: m.ID, Name: name, Ok: false})
 		}
 	}
 }
@@ -97,6 +128,8 @@ func uniqueName(dir, name string) string {
 }
 
 // returns true only if every chunk was written to the connection
+var ackWait = 30 * time.Second
+
 func sendFile(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
@@ -104,6 +137,14 @@ func sendFile(path string) bool {
 	}
 	defer f.Close()
 	name := filepath.Base(path)
+	idb := make([]byte, 8)
+	rand.Read(idb)
+	id := hex.EncodeToString(idb)
+	ch := make(chan bool, 1)
+	amu.Lock()
+	acks[id] = ch
+	amu.Unlock()
+	defer func() { amu.Lock(); delete(acks, id); amu.Unlock() }()
 	buf := make([]byte, 192*1024)
 	for {
 		n, err := io.ReadFull(f, buf)
@@ -111,7 +152,7 @@ func sendFile(path string) bool {
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			return false
 		}
-		if e := send(Msg{T: "file", Name: name, Data: base64.StdEncoding.EncodeToString(buf[:n]), Last: last}); e != nil {
+		if e := send(Msg{T: "file", Name: name, ID: id, Data: base64.StdEncoding.EncodeToString(buf[:n]), Last: last}); e != nil {
 			fmt.Println("Send interrupted, will retry when the phone reconnects:", name)
 			return false
 		}
@@ -119,8 +160,19 @@ func sendFile(path string) bool {
 			break
 		}
 	}
-	fmt.Println("Sent file:", name)
-	return true
+	// Written to the connection is not the same as delivered: wait for the receiver's confirmation.
+	select {
+	case ok := <-ch:
+		if ok {
+			fmt.Println("Delivered (confirmed by phone):", name)
+		} else {
+			fmt.Println("Phone could not save:", name)
+		}
+		return ok
+	case <-time.After(ackWait):
+		fmt.Println("Sent but NOT confirmed by the phone, kept in Send folder:", name)
+		return false
+	}
 }
 
 // Files in the Send folder go to the phone, then move to Send\sent. A file whose transfer
