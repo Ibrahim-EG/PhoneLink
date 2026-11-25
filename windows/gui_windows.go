@@ -46,7 +46,7 @@ func runGUI(l net.Listener) {
 		Layout:   VBox{Margins: Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}, Spacing: 10},
 		Children: []Widget{
 			Label{Text: "PhoneLink", Font: Font{Family: "Segoe UI", PointSize: 20, Bold: true}},
-			Label{Text: "Your phone and this PC, on the same Wi-Fi. Nothing goes through the internet.", Font: Font{Family: "Segoe UI", PointSize: 9}},
+			Label{Text: "Connects your phone and this PC directly over your local network.", Font: Font{Family: "Segoe UI", PointSize: 9}},
 			GroupBox{
 				Title:  "Connection",
 				Layout: VBox{Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 10}, Spacing: 6},
