@@ -80,7 +80,8 @@ if cmp -s shots/motion-a.png shots/motion-b.png; then softfail "screen identical
 # touch feedback: long press with a screenshot taken while the finger is down (visual review only, not asserted)
 SZ=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1); W=${SZ%x*}; H=${SZ#*x}
 adb shell input swipe $((W/2)) $((H*6/10)) $((W/2)) $((H*6/10)) 2500 &
-sleep 1; adb exec-out screencap -p > shots/touch-down.png; wait
+SWPID=$!
+sleep 1; adb exec-out screencap -p > shots/touch-down.png; wait $SWPID
 echo "UNVERIFIED touch glow/ripple: frame saved at shots/touch-down.png for visual review, not asserted"
 # notification mirroring was removed from the app; nothing to test
 adb exec-out screencap -p > shots/final.png
