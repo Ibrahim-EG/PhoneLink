@@ -62,7 +62,7 @@ func TestPairingAndFile(t *testing.T) {
 		if last {
 			end = len(data)
 		}
-		m, _ := json.Marshal(Msg{T: "file", Name: "../evil/test.bin", Data: base64.StdEncoding.EncodeToString(data[off:end]), Last: last})
+		m, _ := json.Marshal(Msg{T: "file", Name: "../evil/test.bin", ID: "abc123", Data: base64.StdEncoding.EncodeToString(data[off:end]), Last: last})
 		if err := g.Write(a, m); err != nil {
 			t.Fatal(err)
 		}
@@ -77,6 +77,16 @@ func TestPairingAndFile(t *testing.T) {
 	}
 	if string(got) != string(data) {
 		t.Fatalf("file mismatch %d vs %d", len(got), len(data))
+	}
+	// the receiver must confirm completion with an ack carrying the same transfer id
+	b2, err := g.Read(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ack Msg
+	json.Unmarshal(b2, &ack)
+	if ack.T != "ack" || ack.ID != "abc123" || !ack.Ok {
+		t.Fatalf("bad ack %+v", ack)
 	}
 	if !isTrusted(cli.PublicKey().Bytes()) {
 		t.Fatal("not remembered")
