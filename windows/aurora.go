@@ -6,7 +6,8 @@ import (
 	"math"
 )
 
-// Palette recovered from the user's AuroraScreensaver shader (aurora.frag) and HUD (AuroraHudView.kt):
+// Palette recovered from the user's private Aurora repo (src/aurora.frag: green (0.10,1.00,0.42), teal (0.05,0.55,0.75),
+// violet (0.45,0.18,0.75), sky (0.008,0.022,0.048)) and the AuroraScreensaver shader/HUD (AuroraHudView.kt):
 //
 //	night sky   (0.003,0.006,0.013) -> (0.001,0.014,0.024)   near-black blue
 //	aurora      green (0.08,0.85,0.42), teal (0.14,0.56,0.55), purple (0.42,0.16,0.72), rose (0.85,0.22,0.36)
@@ -18,10 +19,12 @@ import (
 type rgb struct{ r, g, b float64 }
 
 var (
-	skyTop    = rgb{10, 14, 46}    // deep blue
-	skyBottom = rgb{34, 14, 74}    // blue-violet
-	auPurple  = rgb{107, 41, 184}  // shader purple (0.42,0.16,0.72)
-	auTeal    = rgb{36, 143, 140}  // shader teal (0.14,0.56,0.55)
+	skyTop    = rgb{10, 14, 46}   // deep blue
+	skyBottom = rgb{34, 14, 74}   // blue-violet
+	auPurple  = rgb{115, 46, 191} // Aurora violet (0.45,0.18,0.75)
+	auTeal    = rgb{13, 140, 191} // Aurora teal (0.05,0.55,0.75)
+	auGreen   = rgb{26, 255, 107} // Aurora green (0.10,1.00,0.42)
+	auSkyDark = rgb{2, 6, 12}
 	auSky     = rgb{110, 200, 255} // HUD glow
 	auRose    = rgb{217, 56, 92}   // shader rose (0.85,0.22,0.36)
 )
@@ -75,56 +78,74 @@ func clamp8(v float64) uint8 {
 	return uint8(v)
 }
 
-// Render draws a w x h frame: deep blue to violet gradient, slow drifting purple/teal/sky glows
-// (the aurora curtains), a soft glow that follows the pointer, and click ripples.
+// hash gives a stable pseudo random number per pixel (stars).
+func hash2(x, y int) float64 {
+	n := uint32(x)*374761393 + uint32(y)*668265263
+	n = (n ^ (n >> 13)) * 1274126177
+	return float64((n^(n>>16))&0xffff) / 65535
+}
+
+// Render draws a w x h frame: deep blue to violet sky, three slow drifting aurora curtains with
+// vertical rays (teal and violet mostly, a little green, as in the shader), twinkling stars,
+// a gentle lift of the curtains toward the pointer, and click ripples.
 func (a *AuroraState) Render(w, h int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	t := a.T
-	type blob struct {
-		x, y, rx, ry float64
-		c            rgb
-		k            float64
+	asp := float64(w) / float64(h)
+	type layer struct {
+		seed, base, width, k float64
+		c1, c2               rgb // bottom colour, top colour
 	}
-	bl := []blob{
-		{.25 + .18*math.Sin(t*.21), .42 + .10*math.Sin(t*.33+1), .34, .55, auPurple, .75},
-		{.62 + .20*math.Sin(t*.17+2), .35 + .12*math.Sin(t*.27), .38, .50, auTeal, .55},
-		{.82 + .12*math.Sin(t*.23+4), .55 + .10*math.Sin(t*.19+2), .30, .50, auSky, .28},
-		{.45 + .25*math.Sin(t*.13+5), .70 + .08*math.Sin(t*.31), .30, .40, auRose, .16},
+	layers := []layer{
+		{0.0, 0.50, 0.17, 0.62, auTeal, auPurple},
+		{2.3, 0.40, 0.14, 0.50, auPurple, auSky},
+		{5.1, 0.60, 0.15, 0.30, auGreen, auTeal},
 	}
-	pointer := blob{a.PX, a.PY, .20, .50, auSky, .30 * a.Active}
-	bl = append(bl, pointer)
 	for y := 0; y < h; y++ {
 		fy := float64(y) / float64(h-1)
 		for x := 0; x < w; x++ {
 			fx := float64(x) / float64(w-1)
-			asp := float64(w) / float64(h)
 			r := skyTop.r + (skyBottom.r-skyTop.r)*fy
 			g := skyTop.g + (skyBottom.g-skyTop.g)*fy
 			b := skyTop.b + (skyBottom.b-skyTop.b)*fy
-			// slow curtain shimmer
-			curtain := 0.5 + 0.5*math.Sin(fx*9+t*.45+math.Sin(fy*3+t*.2)*2)
-			for _, o := range bl {
-				dx := (fx - o.x) / o.rx
-				dy := (fy - o.y) / o.ry
-				d := dx*dx + dy*dy
-				if d > 6 {
+			xw := fx * asp * 1.1
+			for _, L := range layers {
+				flow := 0.55*math.Sin(xw*1.3+t*.16+L.seed) + 0.30*math.Sin(xw*2.9-t*.11+L.seed*2)
+				centre := L.base + 0.11*flow
+				// the curtain leans toward the pointer
+				px := (fx - a.PX) * 3
+				centre += (a.PY - centre) * 0.35 * a.Active * math.Exp(-px*px)
+				d := (fy - centre) / L.width
+				if d > 0 {
+					d *= 1.5 // sharper lower edge, softer top, like real curtains
+				}
+				band := math.Exp(-d * d)
+				if band < 0.01 {
 					continue
 				}
-				v := o.k * math.Exp(-d) * (0.75 + 0.25*curtain)
-				r += o.c.r * v
-				g += o.c.g * v
-				b += o.c.b * v
+				rays := 0.62 + 0.38*math.Sin(xw*26+3*flow+t*.5+L.seed)*math.Sin(xw*9-t*.3)
+				v := band * rays * L.k
+				mix := math.Max(0, math.Min(1, (centre-fy)/0.3+0.5))
+				r += (L.c1.r*(1-mix) + L.c2.r*mix) * v
+				g += (L.c1.g*(1-mix) + L.c2.g*mix) * v
+				b += (L.c1.b*(1-mix) + L.c2.b*mix) * v
+			}
+			if hs := hash2(x, y); hs > 0.994 {
+				tw := 0.5 + 0.5*math.Sin(t*2.5+hs*400)
+				v := 150 * tw * (1 - fy*0.6)
+				r += v * .85
+				g += v * .92
+				b += v
 			}
 			for _, rp := range a.Ripples {
 				dx := (fx - rp.X) * asp
 				dy := fy - rp.Y
 				dist := math.Sqrt(dx*dx+dy*dy) / 0.45
 				ring := math.Exp(-math.Pow((dist-rp.Age*.9)*7, 2)) * (1 - rp.Age/1.6)
-				r += 150 * ring
-				g += 190 * ring
-				b += 255 * ring
+				r += 90 * ring
+				g += 130 * ring
+				b += 200 * ring
 			}
-			// soft vignette
 			vg := 1 - 0.25*math.Pow(math.Abs(fx-.5)*2, 3)
 			img.SetRGBA(x, y, color.RGBA{clamp8(r * vg), clamp8(g * vg), clamp8(b * vg), 255})
 		}
