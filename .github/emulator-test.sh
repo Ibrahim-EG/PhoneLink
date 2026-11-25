@@ -76,17 +76,62 @@ else
 fi
 adb exec-out screencap -p > shots/phone-to-pc-file.png
 # phone -> PC real clipboard listener: set the phone clipboard through the address box (type, select all, copy)
-echo "UNVERIFIED phone clipboard listener -> PC: no reliable way to copy on Android 7.0 headless, not tested"
-echo "UNVERIFIED received-file copy to a user-chosen folder: the system folder picker is not driven by this test"
+# ---- phone clipboard LISTENER -> PC: type a word in the address field, long-press it to select, tap the system "Copy" ----
+python3 .github/e2e.py focus_host
+adb shell input keyevent 123; for i in $(seq 1 60); do adb shell input keyevent 67; done
+adb shell input text listenerabc; sleep 1
+python3 .github/e2e.py longpress_host
+python3 .github/e2e.py dump selection
+if python3 .github/e2e.py tap_any '^copy$' 6; then
+  for i in $(seq 1 15); do grep -q listenerabc "$HOME/clip-recv.txt" 2>/dev/null && break; sleep 1; done
+  if grep -q listenerabc "$HOME/clip-recv.txt" 2>/dev/null; then echo "OK phone clipboard LISTENER: text copied on the phone arrived at the PC (system Copy button used)"; else cat shots/pc.log; adb logcat -d -s PhoneLinkNote:V | tail -20; softfail "phone copied text but the PC clipboard never got it (listener path)"; fi
+else
+  echo "UNVERIFIED phone clipboard listener -> PC: the system Copy button could not be driven here (see shots/ui-selection.txt)"
+fi
+adb exec-out screencap -p > shots/clip-phone-to-pc.png
+adb shell input keyevent 4; sleep 1
+# ---- folder picker: open the system folder picker, pick a folder, then receive a file and look for the copy outside app storage ----
+if python3 .github/e2e.py tap_any '^choose folder for received files$' 6; then
+  sleep 3; python3 .github/e2e.py dump picker1; adb exec-out screencap -p > shots/picker1.png
+  CHOSEN=0
+  for i in 1 2 3 4 5 6; do
+    if python3 .github/e2e.py tap_any '^(select|use this folder|allow)' 2; then CHOSEN=1; sleep 2; break; fi
+    python3 .github/e2e.py tap_any '^(downloads?|show roots)$' 2 || true; sleep 2; python3 .github/e2e.py dump picker-step$i
+  done
+  adb exec-out screencap -p > shots/picker2.png; python3 .github/e2e.py dump picker2
+  python3 .github/e2e.py tap_any '^(allow|select)' 2 || true
+  sleep 2; adb exec-out screencap -p > shots/picker3.png
+  if [ "$CHOSEN" = 1 ] && python3 .github/e2e.py wait "Received files are copied to your chosen folder" 10; then
+    echo "folder chosen in the system picker; the app reports it"
+    echo "hello folder" > "$HOME/Downloads/PhoneLink/Send/e2e-folder.txt"
+    FOUND=""
+    for i in $(seq 1 40); do FOUND=$(adb shell "find /sdcard -name e2e-folder.txt 2>/dev/null" | tr -d '\r' | grep -v "Android/data" | head -1); [ -n "$FOUND" ] && break; sleep 1; done
+    adb shell "find /sdcard -name e2e-folder.txt 2>/dev/null" | tee shots/folder-find.txt
+    if [ -n "$FOUND" ]; then echo "OK received file was copied into the user-chosen folder: $FOUND"; else softfail "folder was chosen but no copy of the received file appeared outside app storage"; fi
+  else
+    echo "UNVERIFIED received-file copy to a chosen folder: could not complete the system picker on this emulator (see shots/ui-picker*.txt, picker*.png)"
+  fi
+else
+  echo "UNVERIFIED received-file copy to a chosen folder: the Choose folder button was not found"
+fi
+adb shell input keyevent 4; sleep 1
 # sky motion: two frames 2 seconds apart should differ (animation). This does not prove smoothness.
 adb exec-out screencap -p > shots/motion-a.png; sleep 2; adb exec-out screencap -p > shots/motion-b.png
 if cmp -s shots/motion-a.png shots/motion-b.png; then softfail "screen identical 2s apart: no animation seen"; else echo "OK frames differ 2s apart (animation or other change, smoothness not measured)"; fi
-# touch feedback: long press with a screenshot taken while the finger is down (visual review only, not asserted)
+# touch feedback: three no-touch frames, then a frame while the finger is held on an inert spot (the header); compare pixels around the touch
 SZ=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1); W=${SZ%x*}; H=${SZ#*x}
-adb shell input swipe $((W/2)) $((H*6/10)) $((W/2)) $((H*6/10)) 2500 &
+TX=$((W*3/4)); TY=$((H*8/100))
+adb shell input keyevent 4 >/dev/null 2>&1; sleep 1
+for n in 1 2 3; do adb exec-out screencap -p > shots/touch-base$n.png; sleep 1; done
+adb shell input swipe $TX $TY $TX $TY 3000 &
 SWPID=$!
 sleep 1; adb exec-out screencap -p > shots/touch-down.png; wait $SWPID
-echo "UNVERIFIED touch glow/ripple: frame saved at shots/touch-down.png for visual review, not asserted"
+pip install --quiet pillow >/dev/null 2>&1 || true
+TD=$(python3 .github/touchdiff.py shots/touch-base1.png shots/touch-base2.png shots/touch-base3.png shots/touch-down.png $TX $TY); RC=$?
+echo "touch measurement: $TD"
+if [ $RC -eq 0 ]; then echo "OK touch changes the pixels around the finger well above the sky's own motion ($TD); the look still needs a human eye (shots/touch-down.png)"
+elif [ $RC -eq 1 ]; then softfail "touch glow not detected around the finger ($TD)"
+else echo "UNVERIFIED touch glow: could not measure ($TD)"; fi
 # notification mirroring was removed from the app; nothing to test
 adb exec-out screencap -p > shots/final.png
 kill $PCPID
