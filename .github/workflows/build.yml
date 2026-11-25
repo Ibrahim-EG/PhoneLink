@@ -11,7 +11,7 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v3
         with: { gradle-version: '8.5' }
-      - run: gradle -p android assembleDebug
+      - run: gradle -p android testDebugUnitTest assembleDebug
       - run: cp android/app/build/outputs/apk/debug/app-debug.apk PhoneLink.apk
       - uses: actions/upload-artifact@v4
         with: { name: phonelink-android-apk, path: PhoneLink.apk }
