@@ -58,6 +58,33 @@ if __name__ == "__main__":
     elif cmd == "focus_host":
         if not tap(cls="android.widget.EditText"): sys.exit("no address field")
         time.sleep(1)
+    elif cmd == "dump":
+        root = dump()
+        with open("shots/ui-" + sys.argv[2] + ".txt", "w") as f:
+            for n in root.iter("node"):
+                if n.get("text") or n.get("content-desc"):
+                    f.write("%s | %s | %s | %s\n" % (n.get("class"), n.get("text"), n.get("content-desc"), n.get("bounds")))
+    elif cmd == "tap_any":
+        pat = re.compile(sys.argv[2], re.I)
+        tries = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+        for _ in range(tries):
+            hit = None
+            for n in dump().iter("node"):
+                if pat.search(n.get("text") or "") or pat.search(n.get("content-desc") or ""):
+                    hit = n; break
+            if hit is not None:
+                x, y = center(hit)
+                adb("shell", "input", "tap", str(x), str(y))
+                print("tapped:", hit.get("text") or hit.get("content-desc"))
+                sys.exit(0)
+            time.sleep(1)
+        sys.exit("nothing matched " + sys.argv[2])
+    elif cmd == "longpress_host":
+        n = find(dump(), cls="android.widget.EditText")
+        if n is None: sys.exit("no address field")
+        x, y = center(n)
+        adb("shell", "input", "swipe", str(x), str(y), str(x), str(y), "1200")
+        time.sleep(1)
     elif cmd == "tap":
         if not tap(text=sys.argv[2]): sys.exit("no button " + sys.argv[2])
     elif cmd == "code":
