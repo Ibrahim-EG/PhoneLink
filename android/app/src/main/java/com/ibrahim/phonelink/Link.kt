@@ -38,7 +38,13 @@ object Link {
     private class Partial(val os: FileOutputStream, val file: File)
     private val rfiles = HashMap<String, Partial>()
 
-    private fun setStat(s: String) { status = s; main.post { onChange?.invoke() } }
+    val events = java.util.concurrent.CopyOnWriteArrayList<String>()
+    private fun setStat(s: String) {
+        status = s
+        events.add(0, java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date()) + "  " + s)
+        while (events.size > 30) events.removeAt(events.size - 1)
+        main.post { onChange?.invoke() }
+    }
 
     fun approve(ok: Boolean) { approved = ok; confirm?.countDown() }
 
