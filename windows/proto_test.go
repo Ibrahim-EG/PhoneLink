@@ -25,11 +25,12 @@ func TestPairingAndFile(t *testing.T) {
 
 	nc := make([]byte, 16)
 	rand.Read(nc)
-	go a.Write(append(append([]byte{}, cli.PublicKey().Bytes()...), nc...))
+	go a.Write(commit(cli.PublicKey().Bytes(), nc))
 	resp := make([]byte, 81)
 	if _, err := io.ReadFull(a, resp); err != nil {
 		t.Fatal(err)
 	}
+	go a.Write(append(append([]byte{}, cli.PublicKey().Bytes()...), nc...))
 	spk, _ := ecdh.P256().NewPublicKey(resp[:65])
 	sh, _ := cli.ECDH(spk)
 	g := deriveKey(sh, nc, resp[65:])
@@ -47,7 +48,7 @@ func TestPairingAndFile(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if code != sas(cli.PublicKey().Bytes(), srvPriv.PublicKey().Bytes()) {
+	if code != sas(cli.PublicKey().Bytes(), srvPriv.PublicKey().Bytes(), nc, resp[65:]) {
 		t.Fatalf("code mismatch %q", code)
 	}
 	if err := writeFrame(a, g, []byte(`{"t":"hello"}`)); err != nil {
