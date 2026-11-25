@@ -33,9 +33,8 @@ object Link {
     private val rnd = SecureRandom()
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var lastRecvClip: String? = null
-    private class AckWait { val latch = CountDownLatch(1); @Volatile var ok = false }
-    private val acks = java.util.concurrent.ConcurrentHashMap<String, AckWait>()
-    private val doneIds = HashSet<String>()
+    private val acks = AckTracker()
+    private val doneIds = DoneIds()
     private class Partial(val os: FileOutputStream, val file: File)
     private val rfiles = HashMap<String, Partial>()
 
@@ -134,7 +133,7 @@ object Link {
             "clip" -> { val t = m.optString("text"); lastRecvClip = t
                 main.post { (c.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("pc", t)) } }
             "file" -> recvFile(c, m)
-            "ack" -> acks[m.optString("id")]?.let { it.ok = m.optBoolean("ok"); it.latch.countDown() }
+            "ack" -> acks.onAck(m.optString("id"), m.optBoolean("ok"))
         }
     }
 
@@ -168,7 +167,7 @@ object Link {
         val name = File(m.optString("name")).name; if (name.isEmpty() || name.endsWith(".part")) return
         val id = m.optString("id")
         synchronized(rfiles) {
-            if (id.isNotEmpty() && doneIds.contains(id)) {   // a retry of a finished transfer: confirm again, no duplicate
+            if (id.isNotEmpty() && doneIds.has(id)) {   // a retry of a finished transfer: confirm again, no duplicate
                 if (m.optBoolean("last")) Thread { send(JSONObject().put("t", "ack").put("id", id).put("name", name).put("ok", true)) }.start()
                 return
             }
@@ -195,8 +194,8 @@ object Link {
         Thread {
             try {
                 var name = "file"
-                val id = ByteArray(8).also { rnd.nextBytes(it) }.joinToString("") { "%02x".format(it) }
-                val wait = AckWait(); acks[id] = wait
+                val id = c.contentResolver.openInputStream(uri)!!.use { TransferId.ofStream(it) }
+                val wait = acks.register(id)
                 c.contentResolver.query(uri, null, null, null, null)?.use {
                     if (it.moveToFirst()) { val i = it.getColumnIndex(OpenableColumns.DISPLAY_NAME); if (i >= 0) name = it.getString(i) }
                 }
@@ -213,8 +212,7 @@ object Link {
                     }
                 }
                 // written to the connection is not delivered: wait for the PC's confirmation
-                val confirmed = wait.latch.await(30, TimeUnit.SECONDS) && wait.ok
-                acks.remove(id)
+                val confirmed = acks.await(id, wait, 30000)
                 setStat(if (confirmed) "Delivered (confirmed by PC): $name" else "Sent but NOT confirmed by the PC: $name. Check the PC, send again if missing.")
             } catch (e: Exception) { setStat("Send failed: ${e.message}") }
         }.start()
