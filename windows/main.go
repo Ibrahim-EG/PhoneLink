@@ -26,6 +26,8 @@ type Msg struct {
 	Name  string `json:"name,omitempty"`
 	Data  string `json:"data,omitempty"` // base64 chunk
 	Last  bool   `json:"last,omitempty"`
+	ID    string `json:"id,omitempty"` // transfer id, echoed in the ack
+	Ok    bool   `json:"ok,omitempty"`
 }
 
 const port = 47800
@@ -132,6 +134,8 @@ func handle(c net.Conn, g *Session) {
 			go toast(m.App+": "+m.Title, m.Text)
 		case "file":
 			recvFile(m)
+		case "ack":
+			ackReceived(m.ID, m.Ok)
 		case "call":
 			go toast("Incoming call", m.Text)
 		}
