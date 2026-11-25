@@ -64,6 +64,10 @@ func waitPairing(code string) bool {
 	ch := decision
 	uiMu.Unlock()
 	var ok bool
+	if testAutoAccept {
+		time.Sleep(1500 * time.Millisecond)
+		ch <- true
+	}
 	select {
 	case ok = <-ch:
 	case <-time.After(80 * time.Second):
