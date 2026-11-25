@@ -51,7 +51,9 @@ FAILS=0
 softfail() { FAILS=$((FAILS+1)); echo "RESULT FAIL: $1"; adb logcat -d | tail -40 > shots/logcat-soft-$RANDOM.txt; }
 # PC -> phone clipboard: the phone must log receipt; then try to paste into the address box to see the real clipboard
 echo -n "pc-clip-123" > "$HOME/clip-send.txt"
-if python3 .github/e2e.py wait "Clipboard received from PC" 30; then echo "OK PC->phone clipboard receipt logged on the phone (log receipt only)"; else cat shots/pc.log; softfail "phone did not receive the PC clipboard"; fi
+logwait() { for i in $(seq 1 $2); do adb logcat -d -s PhoneLinkNote:V | grep -q "$1" && return 0; sleep 1; done; return 1; }
+if logwait "Clipboard received from PC" 30; then echo "OK PC->phone clipboard receipt logged on the phone (log receipt only)"; else cat shots/pc.log; adb logcat -d -s PhoneLinkNote:V AndroidRuntime:E | tail -40; softfail "phone did not log receipt of the PC clipboard (logcat PhoneLinkNote)"; fi
+if logwait "setPrimaryClip done" 5; then echo "OK phone applied the PC text to its clipboard (setPrimaryClip returned, logcat)"; else adb logcat -d -s PhoneLinkNote:V | tail -20; softfail "phone did not apply the PC text to its clipboard"; fi
 python3 .github/e2e.py focus_host || echo "UNVERIFIED could not focus the address field for the paste check"
 adb shell input keyevent 279 # KEYCODE_PASTE into the focused address box
 sleep 1
