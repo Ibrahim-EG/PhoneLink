@@ -74,16 +74,31 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force shots | Out-Null
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          Add-Type @"
+          using System; using System.Runtime.InteropServices;
+          public struct RECT { public int Left, Top, Right, Bottom; }
+          public class W { [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+                           [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); }
+          "@
           $p = Start-Process -FilePath .\exe\PhoneLink.exe -PassThru
           Start-Sleep -Seconds 8
           if ($p.HasExited) { Write-Error "PhoneLink.exe exited with code $($p.ExitCode)"; exit 1 }
-          "window title: [$($p.MainWindowTitle)] handle: $($p.MainWindowHandle)" | Tee-Object shots\info.txt
-          $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
-          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
-          $g = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
-          $bmp.Save("shots\desktop.png")
           if ($p.MainWindowHandle -eq 0) { Write-Error "no main window"; exit 1 }
+          [W]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+          Start-Sleep -Seconds 1
+          function Shot($name) {
+            $r = New-Object RECT; [W]::GetWindowRect($p.MainWindowHandle, [ref]$r) | Out-Null
+            $w = $r.Right - $r.Left; $h = $r.Bottom - $r.Top
+            $bmp = New-Object System.Drawing.Bitmap $w, $h
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($r.Left, $r.Top, 0, 0, (New-Object System.Drawing.Size $w, $h))
+            $bmp.Save("shots\$name.png"); "$name ${w}x${h} at $($r.Left),$($r.Top)"
+          }
+          Shot "window1"
+          $r = New-Object RECT; [W]::GetWindowRect($p.MainWindowHandle, [ref]$r) | Out-Null
+          [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point ($r.Left + 380), ($r.Top + 90)
+          Start-Sleep -Seconds 3
+          Shot "window2"
       - name: Publish screenshots
         if: always()
         shell: bash
