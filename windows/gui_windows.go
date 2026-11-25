@@ -11,6 +11,7 @@ import (
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
+	"github.com/lxn/win"
 )
 
 func addressText() string {
@@ -27,59 +28,102 @@ func addressText() string {
 
 func openFolder(dir string) { exec.Command("explorer", dir).Start() }
 
+var (
+	cText  = walk.RGB(228, 240, 255) // HUD text colour from the Aurora project
+	cMuted = walk.RGB(168, 220, 255) // HUD secondary text colour
+	cBody  = walk.RGB(19, 17, 54)    // deep blue-violet window body
+)
+
 // runGUI shows the native window and blocks until the user chooses Exit.
 func runGUI(l net.Listener) {
 	var mw *walk.MainWindow
 	var statusLbl, codeLbl *walk.Label
-	var pairBox *walk.GroupBox
+	var pairBox *walk.Composite
 	var logBox *walk.TextEdit
-	var sendBtn *walk.PushButton
+	var header *walk.CustomWidget
+	au := NewAurora()
+	var hdrW, hdrH int
 
 	appIcon, _ := walk.NewIconFromImageForDPI(renderIcon(64), 96)
 	quitting := false
+	bodyBrush := SolidColorBrush{Color: cBody}
+	f := func(pt int, bold bool) Font { return Font{Family: "Segoe UI", PointSize: pt, Bold: bold} }
 
 	err := MainWindow{
-		AssignTo: &mw,
-		Title:    "PhoneLink",
-		MinSize:  Size{Width: 460, Height: 560},
-		Size:     Size{Width: 500, Height: 620},
-		Layout:   VBox{Margins: Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}, Spacing: 10},
+		AssignTo:   &mw,
+		Title:      "PhoneLink",
+		MinSize:    Size{Width: 460, Height: 600},
+		Size:       Size{Width: 500, Height: 660},
+		Background: bodyBrush,
+		Layout:     VBox{MarginsZero: true, Spacing: 0},
 		Children: []Widget{
-			Label{Text: "PhoneLink", Font: Font{Family: "Segoe UI", PointSize: 20, Bold: true}},
-			Label{Text: "Connects your phone and this PC directly over your local network.", Font: Font{Family: "Segoe UI", PointSize: 9}},
-			GroupBox{
-				Title:  "Connection",
-				Layout: VBox{Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 10}, Spacing: 6},
-				Children: []Widget{
-					Label{AssignTo: &statusLbl, Text: "Waiting for the phone", Font: Font{Family: "Segoe UI", PointSize: 12, Bold: true}},
-					Label{Text: "Type this PC address in the phone app:"},
-					LineEdit{Text: addressText(), ReadOnly: true, Font: Font{Family: "Segoe UI", PointSize: 13, Bold: true}},
+			CustomWidget{
+				AssignTo:            &header,
+				MinSize:             Size{Height: 150},
+				MaxSize:             Size{Height: 150},
+				ClearsBackground:    false,
+				InvalidatesOnResize: true,
+				PaintMode:           PaintNormal,
+				Paint: func(canvas *walk.Canvas, _ walk.Rectangle) error {
+					b := header.ClientBoundsPixels()
+					hdrW, hdrH = b.Width, b.Height
+					img := au.Render(b.Width/3+1, b.Height/3+1)
+					bmp, err := walk.NewBitmapFromImageForDPI(img, 96)
+					if err != nil {
+						return err
+					}
+					defer bmp.Dispose()
+					if err := canvas.DrawImageStretchedPixels(bmp, b); err != nil {
+						return err
+					}
+					title, _ := walk.NewFont("Segoe UI", 22, walk.FontBold)
+					sub, _ := walk.NewFont("Segoe UI", 10, 0)
+					defer title.Dispose()
+					defer sub.Dispose()
+					canvas.DrawTextPixels("PhoneLink", title, cText, walk.Rectangle{X: 24, Y: 34, Width: b.Width - 48, Height: 40}, walk.TextLeft|walk.TextSingleLine)
+					canvas.DrawTextPixels("Your phone and this PC, directly over your local network", sub, cMuted, walk.Rectangle{X: 26, Y: 80, Width: b.Width - 52, Height: 24}, walk.TextLeft|walk.TextSingleLine)
+					return nil
+				},
+				OnMouseMove: func(x, y int, _ walk.MouseButton) {
+					if hdrW > 0 {
+						au.TX, au.TY, au.TargetActive = float64(x)/float64(hdrW), float64(y)/float64(hdrH), 1
+					}
+				},
+				OnMouseDown: func(x, y int, _ walk.MouseButton) {
+					if hdrW > 0 {
+						au.Click(float64(x)/float64(hdrW), float64(y)/float64(hdrH))
+					}
 				},
 			},
-			GroupBox{
-				AssignTo: &pairBox,
-				Title:    "Pairing: compare this code with the phone",
-				Visible:  false,
-				Layout:   VBox{Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 10}, Spacing: 6},
+			Composite{
+				Background: bodyBrush,
+				Layout:     VBox{Margins: Margins{Left: 20, Top: 14, Right: 20, Bottom: 14}, Spacing: 8},
 				Children: []Widget{
-					Label{AssignTo: &codeLbl, Text: "------", Alignment: AlignHCenterVCenter, Font: Font{Family: "Consolas", PointSize: 30, Bold: true}},
-					Label{Text: "Only press Accept if the phone shows the same six digits.", Alignment: AlignHCenterVCenter},
+					Label{AssignTo: &statusLbl, Text: "Waiting for the phone", TextColor: cText, Font: f(13, true)},
+					Label{Text: "Type this PC address in the phone app:", TextColor: cMuted},
+					LineEdit{Text: addressText(), ReadOnly: true, Font: f(14, true)},
 					Composite{
-						Layout: HBox{MarginsZero: true, Spacing: 8},
+						AssignTo:   &pairBox,
+						Visible:    false,
+						Background: bodyBrush,
+						Layout:     VBox{MarginsZero: true, Spacing: 6},
 						Children: []Widget{
-							PushButton{Text: "Accept", OnClicked: func() { answerPairing(true) }},
-							PushButton{Text: "Reject", OnClicked: func() { answerPairing(false) }},
+							Label{Text: "Pairing: compare this code with the phone", TextColor: cMuted},
+							Label{AssignTo: &codeLbl, Text: "------", TextColor: cText, Alignment: AlignHCenterVCenter, Font: Font{Family: "Consolas", PointSize: 32, Bold: true}},
+							Label{Text: "Only press Accept if the phone shows the same six digits.", TextColor: cMuted, Alignment: AlignHCenterVCenter},
+							Composite{
+								Background: bodyBrush,
+								Layout:     HBox{MarginsZero: true, Spacing: 8},
+								Children: []Widget{
+									PushButton{Text: "Accept", OnClicked: func() { answerPairing(true) }},
+									PushButton{Text: "Reject", OnClicked: func() { answerPairing(false) }},
+								},
+							},
 						},
 					},
-				},
-			},
-			GroupBox{
-				Title:  "Files",
-				Layout: VBox{Margins: Margins{Left: 10, Top: 8, Right: 10, Bottom: 10}, Spacing: 6},
-				Children: []Widget{
+					VSpacer{Size: 4},
 					PushButton{
-						AssignTo: &sendBtn,
-						Text:     "Send a file to the phone...",
+						Text: "Send a file to the phone...",
 						OnClicked: func() {
 							dlg := new(walk.FileDialog)
 							dlg.Title = "Choose a file to send to the phone"
@@ -91,18 +135,14 @@ func runGUI(l net.Listener) {
 						},
 					},
 					Composite{
-						Layout: HBox{MarginsZero: true, Spacing: 8},
+						Background: bodyBrush,
+						Layout:     HBox{MarginsZero: true, Spacing: 8},
 						Children: []Widget{
 							PushButton{Text: "Open received files", OnClicked: func() { openFolder(inboxDir()) }},
 							PushButton{Text: "Open send folder", OnClicked: func() { openFolder(outboxDir()) }},
 						},
 					},
-				},
-			},
-			GroupBox{
-				Title:  "Recent activity",
-				Layout: VBox{Margins: Margins{Left: 6, Top: 6, Right: 6, Bottom: 6}},
-				Children: []Widget{
+					Label{Text: "Recent activity", TextColor: cMuted},
 					TextEdit{AssignTo: &logBox, ReadOnly: true, VScroll: true, MinSize: Size{Height: 120}},
 				},
 			},
@@ -166,11 +206,48 @@ func runGUI(l net.Listener) {
 		logBox.SetText(strings.Join(st.Events, "\r\n"))
 	}
 	refresh()
-	go func() {
+	go func() { // slow refresh of state
 		for {
 			time.Sleep(700 * time.Millisecond)
 			mw.Synchronize(refresh)
 		}
 	}()
+	go func() { // animation, about 20 frames a second, only while the window is visible
+		last := time.Now()
+		for {
+			time.Sleep(50 * time.Millisecond)
+			now := time.Now()
+			dt := now.Sub(last).Seconds()
+			last = now
+			mw.Synchronize(func() {
+				if !mw.Visible() {
+					return
+				}
+				au.Step(dt)
+				// pointer influence fades when the mouse leaves the header
+				if x, y, ok := cursorInside(header); !ok {
+					au.TargetActive = 0
+				} else {
+					_ = x
+					_ = y
+				}
+				header.Invalidate()
+			})
+		}
+	}()
 	mw.Run()
+}
+
+// cursorInside reports whether the mouse pointer is over the widget.
+func cursorInside(w walk.Widget) (int, int, bool) {
+	var p win.POINT
+	if !win.GetCursorPos(&p) {
+		return 0, 0, false
+	}
+	if !win.ScreenToClient(w.Handle(), &p) {
+		return 0, 0, false
+	}
+	b := w.ClientBoundsPixels()
+	x, y := int(p.X), int(p.Y)
+	return x, y, x >= 0 && y >= 0 && x < b.Width && y < b.Height
 }
