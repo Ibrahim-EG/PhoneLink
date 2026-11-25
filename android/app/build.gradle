@@ -16,8 +16,9 @@ android {
         debug { enableV1Signing = true; enableV2Signing = true }
     }
     buildTypes { debug { debuggable = false } }
-    // debuggable=false makes lint-vital treat this as a release target and reject targetSdk 28 (a Google Play publishing rule, irrelevant to a sideloaded APK)
-    lint { checkReleaseBuilds = false; abortOnError = false }
+    // debuggable=false makes lint-vital treat this variant as a release target. Only the Google Play publishing rule ExpiredTargetSdkVersion
+    // (targetSdk 28 is deliberate for Android 7 and this APK is sideloaded, not published) is downgraded to a warning; every other fatal lint check still fails the build.
+    lint { warning += ['ExpiredTargetSdkVersion'] }
     compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
     kotlinOptions { jvmTarget = '1.8' }
 }
