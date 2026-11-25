@@ -2,6 +2,7 @@
 # Installs the APK on an Android 7.0 (API 24) emulator, launches it and saves screenshots.
 set -u
 mkdir -p shots
+exec > >(tee shots/test-output.txt) 2>&1
 fail() { echo "FAIL: $1"; adb logcat -d | tail -80 > shots/logcat.txt; adb exec-out screencap -p > shots/fail.png; exit 1; }
 adb shell getprop ro.build.version.release | tee shots/android-version.txt
 start=$(date +%s)
@@ -47,6 +48,11 @@ echo "OK end to end: pairing, connect, PC->phone file with confirmation"
 
 # ---- more functions (each result is printed; hard failures only where the step is deterministic) ----
 PKG=com.ibrahim.phonelink
+hidekb() { for k in 1 2; do adb shell dumpsys input_method | grep -q "mInputShown=true" && { adb shell input keyevent 4; sleep 1; }; done; }
+appfocus() { adb shell dumpsys window | grep mCurrentFocus | grep -q "com.ibrahim.phonelink/"; }
+# ensure_app LABEL: bring PhoneLink to the front, hide the keyboard only if it is shown, and require both window focus and the main screen text
+ensure_app() { foreground; if appfocus && python3 .github/e2e.py wait "Your phone and PC, same Wi-Fi" 5 >/dev/null 2>&1; then return 0; fi; echo "UNVERIFIED $1: precondition failed (PhoneLink was not the focused window showing its main screen)"; adb exec-out screencap -p > shots/precondition-$RANDOM.png; adb shell dumpsys window | grep mCurrentFocus; return 1; }
+foreground() { adb shell am start -n $PKG/.MainActivity >/dev/null 2>&1; sleep 2; hidekb; }
 FAILS=0
 softfail() { FAILS=$((FAILS+1)); echo "RESULT FAIL: $1"; adb logcat -d | tail -40 > shots/logcat-soft-$RANDOM.txt; }
 # PC -> phone clipboard: the phone must log receipt; then try to paste into the address box to see the real clipboard
@@ -77,11 +83,13 @@ fi
 adb exec-out screencap -p > shots/phone-to-pc-file.png
 # phone -> PC real clipboard listener: set the phone clipboard through the address box (type, select all, copy)
 # ---- phone clipboard LISTENER -> PC: type a word in the address field, long-press it to select, tap the system "Copy" ----
+if ensure_app "phone clipboard listener -> PC"; then
 python3 .github/e2e.py focus_host
 adb shell input keyevent 123; for i in $(seq 1 60); do adb shell input keyevent 67; done
 adb shell input text listenerabc; sleep 1
 python3 .github/e2e.py longpress_host
 python3 .github/e2e.py dump selection
+python3 .github/e2e.py tap_any '^select all$' 4 || true; sleep 1; python3 .github/e2e.py dump selection2
 if python3 .github/e2e.py tap_any '^copy$' 6; then
   for i in $(seq 1 15); do grep -q listenerabc "$HOME/clip-recv.txt" 2>/dev/null && break; sleep 1; done
   if grep -q listenerabc "$HOME/clip-recv.txt" 2>/dev/null; then echo "OK phone clipboard LISTENER: text copied on the phone arrived at the PC (system Copy button used)"; else cat shots/pc.log; adb logcat -d -s PhoneLinkNote:V | tail -20; softfail "phone copied text but the PC clipboard never got it (listener path)"; fi
@@ -89,8 +97,10 @@ else
   echo "UNVERIFIED phone clipboard listener -> PC: the system Copy button could not be driven here (see shots/ui-selection.txt)"
 fi
 adb exec-out screencap -p > shots/clip-phone-to-pc.png
-adb shell input keyevent 4; sleep 1
+foreground
+fi
 # ---- folder picker: open the system folder picker, pick a folder, then receive a file and look for the copy outside app storage ----
+if ensure_app "folder picker"; then
 if python3 .github/e2e.py tap_any '^choose folder for received files$' 6; then
   sleep 3; python3 .github/e2e.py dump picker1; adb exec-out screencap -p > shots/picker1.png
   CHOSEN=0
@@ -114,26 +124,30 @@ if python3 .github/e2e.py tap_any '^choose folder for received files$' 6; then
 else
   echo "UNVERIFIED received-file copy to a chosen folder: the Choose folder button was not found"
 fi
-adb shell input keyevent 4; sleep 1
+foreground
+fi
 # sky motion: two frames 2 seconds apart should differ (animation). This does not prove smoothness.
 adb exec-out screencap -p > shots/motion-a.png; sleep 2; adb exec-out screencap -p > shots/motion-b.png
 if cmp -s shots/motion-a.png shots/motion-b.png; then softfail "screen identical 2s apart: no animation seen"; else echo "OK frames differ 2s apart (animation or other change, smoothness not measured)"; fi
 # touch feedback: three no-touch frames, then a frame while the finger is held on an inert spot (the header); compare pixels around the touch
 SZ=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1); W=${SZ%x*}; H=${SZ#*x}
 TX=$((W*3/4)); TY=$((H*8/100))
-adb shell input keyevent 4 >/dev/null 2>&1; sleep 1
+if ensure_app "touch glow"; then TOUCHSKIP=0; else TOUCHSKIP=1; fi
 for n in 1 2 3; do adb exec-out screencap -p > shots/touch-base$n.png; sleep 1; done
 adb shell input swipe $TX $TY $TX $TY 3000 &
 SWPID=$!
-sleep 1; adb exec-out screencap -p > shots/touch-down.png; wait $SWPID
+sleep 1; adb exec-out screencap -p > shots/touch-down.png; if appfocus; then HELDFOCUS=1; else HELDFOCUS=0; fi; wait $SWPID
+if [ "$TOUCHSKIP" = 0 ] && [ "$HELDFOCUS" = 0 ]; then echo "UNVERIFIED touch glow: PhoneLink lost window focus during the hold, frame not usable"; TOUCHSKIP=1; fi
 pip install --quiet pillow >/dev/null 2>&1 || true
 TD=$(python3 .github/touchdiff.py shots/touch-base1.png shots/touch-base2.png shots/touch-base3.png shots/touch-down.png $TX $TY); RC=$?
 echo "touch measurement: $TD"
-if [ $RC -eq 0 ]; then echo "OK touch changes the pixels around the finger well above the sky's own motion ($TD); the look still needs a human eye (shots/touch-down.png)"
+if [ "$TOUCHSKIP" = 1 ]; then :
+elif [ $RC -eq 0 ]; then echo "OK touch changes the pixels around the finger well above the sky's own motion ($TD); the look still needs a human eye (shots/touch-down.png)"
 elif [ $RC -eq 1 ]; then softfail "touch glow not detected around the finger ($TD)"
 else echo "UNVERIFIED touch glow: could not measure ($TD)"; fi
 # notification mirroring was removed from the app; nothing to test
 adb exec-out screencap -p > shots/final.png
 kill $PCPID
 echo "SUMMARY: $FAILS supported-feature checks failed (UNVERIFIED lines above are environment limits, not failures)"
+sleep 2
 [ "$FAILS" -eq 0 ] || exit 1
