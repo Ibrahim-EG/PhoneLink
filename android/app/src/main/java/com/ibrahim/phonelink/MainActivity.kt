@@ -101,9 +101,11 @@ class MainActivity : Activity() {
         row(ac, button("Send a file to PC", true) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE), 1)
         })
-        row(ac, button("Allow notification sharing", false) { startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) })
+        row(ac, button("Choose folder for received files", false) {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION), 2)
+        })
         val info = TextView(this); info.textSize = 12f; info.setTextColor(muted); info.setPadding(0, dp(10), 0, 0)
-        info.text = "Files from the PC are saved in Android/data/com.ibrahim.phonelink/files/Received"
+        info.text = if (Link.exportTree(this) != null) "Received files are copied to your chosen folder. A copy also stays in the app's private storage, which Android deletes if you uninstall the app." else "Files from the PC stay in the app's private storage (Android/data/com.ibrahim.phonelink/files/Received), which Android deletes if you uninstall the app. Choose a folder to keep copies."
         ac.addView(info)
 
         // activity
@@ -137,5 +139,9 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(r: Int, c: Int, d: Intent?) {
         if (r == 1 && c == RESULT_OK && d?.data != null) Link.sendFile(applicationContext, d.data!!)
+        if (r == 2 && c == RESULT_OK && d?.data != null) {
+            val u = d.data!!
+            try { contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION); Link.setExportTree(applicationContext, u) } catch (e: Exception) { Link.note("Could not keep access to that folder: " + (e.message ?: "")) }
+        }
     }
 }
