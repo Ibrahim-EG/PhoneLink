@@ -81,8 +81,28 @@ object Link {
         val m = MessageDigest.getInstance("SHA-256"); parts.forEach { m.update(it) }; return m.digest()
     }
 
+    @Volatile private var wantConn = false
+    @Volatile private var running = false
+
+    /** Keeps trying every 5 s until the user taps Disconnect or pairing is refused. */
     fun connect(c: Context, host: String) {
+        wantConn = true
+        if (running) return
+        running = true
         Thread {
+            while (wantConn) {
+                val retry = session(c, host)
+                if (!retry) break
+                try { Thread.sleep(5000) } catch (_: InterruptedException) {}
+            }
+            running = false
+        }.start()
+    }
+
+    fun stop() { wantConn = false; disconnect(); setStat("Disconnected") }
+
+    /** One connection attempt. Returns true when a retry makes sense. */
+    private fun session(c: Context, host: String): Boolean {
             try {
                 disconnect()
                 setStat("Connecting...")
@@ -99,14 +119,14 @@ object Link {
                 key = SecretKeySpec(sha("phonelink-v2".toByteArray(), shared, nc, ns).copyOf(16), "AES")
                 val trusted = prefs(c).getString("pc", null)
                 val srvB64 = Base64.encodeToString(srvPub, 0)
-                if (trusted != null && trusted != srvB64) { setStat("REFUSED: this PC is not the one you paired with"); s.close(); return@Thread }
+                if (trusted != null && trusted != srvB64) { setStat("REFUSED: this PC is not the one you paired with"); s.close(); return false }
                 if (trusted == null) {
                     val h = sha("phonelink-sas".toByteArray(), myPub, srvPub)
                     val n = ((h[0].toLong() and 255) shl 24 or ((h[1].toLong() and 255) shl 16) or ((h[2].toLong() and 255) shl 8) or (h[3].toLong() and 255)) % 1000000
                     sasCode = "%06d".format(n)
                     approved = false; confirm = CountDownLatch(1)
                     setStat("Compare code with PC: $sasCode")
-                    if (!confirm!!.await(90, TimeUnit.SECONDS) || !approved) { sasCode = null; setStat("Pairing cancelled"); s.close(); return@Thread }
+                    if (!confirm!!.await(90, TimeUnit.SECONDS) || !approved) { sasCode = null; setStat("Pairing cancelled"); s.close(); return false }
                     sasCode = null
                     prefs(c).edit().putString("pc", srvB64).apply()
                 }
@@ -117,9 +137,9 @@ object Link {
                 watchClipboard(c)
                 while (true) handle(c, JSONObject(String(readFrame(ins))))
             } catch (e: Exception) {
-                setStat("Disconnected: ${e.message}")
+                setStat("Disconnected, retrying... (${e.message})")
             } finally { out = null }
-        }.start()
+            return true
     }
 
     fun disconnect() { try { sock?.close() } catch (_: Exception) {}; out = null }
