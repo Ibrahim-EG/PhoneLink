@@ -54,6 +54,18 @@ object Link {
         note("Shared text sent to PC (" + t.length + " characters)")
         return true
     }
+    /** Transfer feedback shown by the UI: percent (-1 = none), and a big banner (kind 0 none, 1 ok, 2 warning, 3 error). */
+    @Volatile var progress = -1
+    @Volatile var progressText = ""
+    @Volatile var bannerKind = 0
+    @Volatile var bannerText = ""
+    @Volatile var bannerSeq = 0
+    private fun banner(kind: Int, text: String) { bannerKind = kind; bannerText = text; bannerSeq++; progress = -1; main.post { onChange?.invoke() } }
+    private fun setProgress(done: Long, total: Long, name: String) {
+        progress = if (total > 0) ((done * 100) / total).toInt().coerceIn(0, 99) else 0
+        progressText = "Sending $name  " + (if (total > 0) "$progress%  (" + (done / 1024) + " of " + (total / 1024) + " KB)" else (done / 1024).toString() + " KB")
+        main.post { onChange?.invoke() }
+    }
     private fun setStat(s: String) {
         status = s
         events.add(0, java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date()) + "  " + s)
@@ -214,6 +226,7 @@ object Link {
                 if (saved) { if (id.isNotEmpty()) doneIds.add(id)
                     val hasTree = exportTree(c) != null
                     val copied = hasTree && exportCopy(c, dest)
+                    banner(1, "Received from PC: ${dest.name}")
                     setStat("Received file: ${dest.name}" + (if (copied) " (also saved to your chosen folder)" else if (hasTree) " (could NOT copy to your chosen folder; kept in app storage)" else "")) } else p.file.delete()
                 Thread { send(JSONObject().put("t", "ack").put("id", id).put("name", name).put("ok", saved)) }.start()
             }
@@ -225,31 +238,39 @@ object Link {
     }
 
     fun sendFile(c: Context, uri: Uri) {
-        if (!connected) { setStat("Not connected. Connect first, then send."); return }
+        if (!connected) { setStat("Not connected. Connect first, then send."); banner(3, "Not connected. Connect first, then send."); return }
+        banner(0, ""); progress = 0; progressText = "Preparing file..."; main.post { onChange?.invoke() }
         Thread {
             try {
+                var total = 0L
                 var name = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "file"
                 val id = c.contentResolver.openInputStream(uri)!!.use { TransferId.ofStream(it) }
                 val wait = acks.register(id)
                 c.contentResolver.query(uri, null, null, null, null)?.use {
-                    if (it.moveToFirst()) { val i = it.getColumnIndex(OpenableColumns.DISPLAY_NAME); if (i >= 0) it.getString(i)?.let { n -> if (n.isNotBlank()) name = n } }
+                    if (it.moveToFirst()) { val i = it.getColumnIndex(OpenableColumns.DISPLAY_NAME); if (i >= 0) it.getString(i)?.let { n -> if (n.isNotBlank()) name = n }
+                        val z = it.getColumnIndex(OpenableColumns.SIZE); if (z >= 0 && !it.isNull(z)) total = it.getLong(z) }
                 }
                 c.contentResolver.openInputStream(uri)!!.use { ins ->
                     val buf = ByteArray(192 * 1024)
+                    var sentBytes = 0L
+                    setProgress(0, total, name)
                     while (true) {
                         var n = 0
                         while (n < buf.size) { val r = ins.read(buf, n, buf.size - n); if (r < 0) break; n += r }
                         val last = n < buf.size
                         val ok = send(JSONObject().put("t", "file").put("name", name).put("id", id)
                             .put("data", Base64.encodeToString(buf, 0, n, Base64.NO_WRAP)).put("last", last))
-                        if (!ok) { setStat("Send interrupted (connection lost): $name. Try again after it reconnects."); return@Thread }
+                        if (!ok) { setStat("Send interrupted (connection lost): $name. Try again after it reconnects."); banner(3, "Not sent: connection lost ($name). Try again."); return@Thread }
+                        sentBytes += n; if (!last) setProgress(sentBytes, total, name)
                         if (last) break
                     }
                 }
                 // written to the connection is not delivered: wait for the PC's confirmation
+                progress = 99; progressText = "Waiting for the PC to confirm $name..."; main.post { onChange?.invoke() }
                 val confirmed = acks.await(id, wait, 30000)
+                if (confirmed) banner(1, "Delivered to PC: $name") else banner(2, "Sent, but the PC did not confirm: $name. Check the PC.")
                 setStat(if (confirmed) "Delivered (confirmed by PC): $name" else "Sent but NOT confirmed by the PC: $name. Check the PC, send again if missing.")
-            } catch (e: Exception) { setStat("Send failed: ${e.message}") }
+            } catch (e: Exception) { setStat("Send failed: ${e.message}"); banner(3, "Send failed: ${e.message}") }
         }.start()
     }
 }
