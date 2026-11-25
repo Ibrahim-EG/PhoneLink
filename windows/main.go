@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/rand"
@@ -102,10 +101,12 @@ func handle(c net.Conn, g cipher.AEAD) {
 	cur, gcm = c, g
 	mu.Unlock()
 	fmt.Println("Phone connected:", c.RemoteAddr())
+	setConnected(true)
 	for {
 		b, err := readFrame(c, g)
 		if err != nil {
 			fmt.Println("Phone disconnected.")
+			setConnected(false)
 			return
 		}
 		var m Msg
@@ -174,10 +175,10 @@ func accept(c net.Conn, priv *ecdh.PrivateKey) {
 		pairMu.Lock()
 		code := sas(peerPub, priv.PublicKey().Bytes())
 		fmt.Println("\nNEW PHONE wants to pair. Confirmation code:", code)
-		fmt.Print("Does the phone show the same code? Type y + Enter to allow: ")
-		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		fmt.Println("Compare it with the phone, then press Accept in the PhoneLink page that opened in your browser.")
+		ok := waitPairing(code)
 		pairMu.Unlock()
-		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y") {
+		if !ok {
 			c.Close()
 			return
 		}
@@ -200,6 +201,7 @@ func main() {
 	}
 	fmt.Println("Enter the PC address in the phone app. Keep this window open.")
 	go clipWatcher()
+	go startUI()
 	go outboxWatcher()
 	fmt.Println("Received files go to:", inboxDir())
 	fmt.Println("Drop files into this folder to send them to the phone:", outboxDir())
