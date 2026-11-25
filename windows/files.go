@@ -1,7 +1,7 @@
 package main
 
 import (
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -26,13 +26,44 @@ type partial struct {
 }
 
 var (
-	rmu  sync.Mutex
-	rcv  = map[string]*partial{}
-	done = map[string]bool{} // transfer ids already completed (a retry is acknowledged, not duplicated)
+	rmu sync.Mutex
+	rcv = map[string]*partial{}
 
 	amu  sync.Mutex
 	acks = map[string]chan bool{}
 )
+
+// Completed transfer ids are kept on disk so a retry after a lost confirmation (even after
+// the app restarted) is acknowledged again instead of saved a second time.
+func donePath() string { os.MkdirAll(baseDir(), 0700); return filepath.Join(baseDir(), ".done-ids") }
+
+// Only recent ids count, so deliberately sending the same unchanged file again later still works.
+const dedupWindow = 10 * time.Minute
+
+func doneHas(id string) bool {
+	b, _ := os.ReadFile(donePath())
+	f := strings.Fields(string(b))
+	for i := 0; i+1 < len(f); i += 2 {
+		var ts int64
+		fmt.Sscan(f[i+1], &ts)
+		if f[i] == id && time.Since(time.Unix(ts, 0)) < dedupWindow {
+			return true
+		}
+	}
+	return false
+}
+func doneAdd(id string) {
+	if f, err := os.OpenFile(donePath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600); err == nil {
+		f.WriteString(fmt.Sprintf("%s %d\n", id, time.Now().Unix()))
+		f.Close()
+	}
+}
+
+// Same file (name, size, modified time) always gets the same id, so every retry is recognisable.
+func stableID(path string, info os.FileInfo) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%d", filepath.Base(path), info.Size(), info.ModTime().UnixNano())))
+	return hex.EncodeToString(h[:8])
+}
 
 func ackReceived(id string, ok bool) {
 	amu.Lock()
@@ -56,7 +87,7 @@ func recvFile(m Msg) {
 	}
 	rmu.Lock()
 	defer rmu.Unlock()
-	if m.ID != "" && done[m.ID] {
+	if m.ID != "" && doneHas(m.ID) {
 		if m.Last {
 			go send(Msg{T: "ack", ID: m.ID, Name: name, Ok: true})
 		}
@@ -92,7 +123,7 @@ func recvFile(m Msg) {
 			fmt.Println("Received file:", final)
 			go toast("File received", final)
 			if m.ID != "" {
-				done[m.ID] = true
+				doneAdd(m.ID)
 			}
 			go send(Msg{T: "ack", ID: m.ID, Name: name, Ok: true})
 		} else {
@@ -137,9 +168,11 @@ func sendFile(path string) bool {
 	}
 	defer f.Close()
 	name := filepath.Base(path)
-	idb := make([]byte, 8)
-	rand.Read(idb)
-	id := hex.EncodeToString(idb)
+	st, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	id := stableID(path, st)
 	ch := make(chan bool, 1)
 	amu.Lock()
 	acks[id] = ch
@@ -175,8 +208,17 @@ func sendFile(path string) bool {
 	}
 }
 
-// Files in the Send folder go to the phone, then move to Send\sent. A file whose transfer
-// was interrupted stays where it is and is sent again after reconnecting.
+const maxAttempts = 3
+
+var (
+	tries   = map[string]int{}       // transfer id -> attempts so far
+	nextTry = map[string]time.Time{} // transfer id -> earliest next attempt
+)
+
+// Files in the Send folder go to the phone, then move to Send\sent once the phone confirmed
+// them. A failed or unconfirmed file is retried with the same transfer id (the phone ignores
+// a duplicate), at most maxAttempts times with a growing pause. After that it is moved to
+// Send\failed and a notification says so: it is never retried automatically again.
 func outboxWatcher() {
 	for {
 		time.Sleep(2 * time.Second)
@@ -191,16 +233,35 @@ func outboxWatcher() {
 			if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 				continue
 			}
-			if info, err := e.Info(); err != nil || time.Since(info.ModTime()) < 3*time.Second {
+			info, err := e.Info()
+			if err != nil || time.Since(info.ModTime()) < 3*time.Second {
 				continue // possibly still being copied into the folder
 			}
 			p := filepath.Join(outboxDir(), e.Name())
-			if !sendFile(p) {
-				break
+			id := stableID(p, info)
+			if time.Now().Before(nextTry[id]) {
+				continue
 			}
-			d := filepath.Join(outboxDir(), "sent")
-			os.MkdirAll(d, 0700)
-			os.Rename(p, filepath.Join(d, uniqueName(d, e.Name())))
+			if sendFile(p) {
+				d := filepath.Join(outboxDir(), "sent")
+				os.MkdirAll(d, 0700)
+				os.Rename(p, filepath.Join(d, uniqueName(d, e.Name())))
+				delete(tries, id)
+				continue
+			}
+			tries[id]++
+			if tries[id] >= maxAttempts {
+				d := filepath.Join(outboxDir(), "failed")
+				os.MkdirAll(d, 0700)
+				os.Rename(p, filepath.Join(d, uniqueName(d, e.Name())))
+				msg := fmt.Sprintf("%s was not confirmed by the phone after %d tries. It may or may not have arrived. Moved to Send\\failed.", e.Name(), maxAttempts)
+				fmt.Println(msg)
+				go toast("File not delivered", msg)
+				delete(tries, id)
+			} else {
+				nextTry[id] = time.Now().Add(time.Duration(tries[id]) * 20 * time.Second)
+			}
+			break
 		}
 	}
 }
