@@ -115,31 +115,29 @@ func runGUI(l net.Listener) {
 								Background: bodyBrush,
 								Layout:     HBox{MarginsZero: true, Spacing: 8},
 								Children: []Widget{
-									PushButton{Text: "Accept", OnClicked: func() { answerPairing(true) }},
-									PushButton{Text: "Reject", OnClicked: func() { answerPairing(false) }},
+									auroraButton("Accept", true, func() { answerPairing(true) }),
+									auroraButton("Reject", false, func() { answerPairing(false) }),
 								},
 							},
 						},
 					},
 					VSpacer{Size: 4},
-					PushButton{
-						Text: "Send a file to the phone...",
-						OnClicked: func() {
-							dlg := new(walk.FileDialog)
-							dlg.Title = "Choose a file to send to the phone"
-							if ok, _ := dlg.ShowOpen(mw); ok && dlg.FilePath != "" {
-								if err := queueForPhone(dlg.FilePath); err != nil {
-									walk.MsgBox(mw, "PhoneLink", fmt.Sprint("Could not queue the file: ", err), walk.MsgBoxIconError)
-								}
+					auroraButton("Send a file to the phone...", true, func() {
+						dlg := new(walk.FileDialog)
+						dlg.Title = "Choose a file to send to the phone"
+						if ok, _ := dlg.ShowOpen(mw); ok && dlg.FilePath != "" {
+							if err := queueForPhone(dlg.FilePath); err != nil {
+								walk.MsgBox(mw, "PhoneLink", fmt.Sprint("Could not queue the file: ", err), walk.MsgBoxIconError)
 							}
-						},
-					},
+						}
+					}),
+
 					Composite{
 						Background: bodyBrush,
 						Layout:     HBox{MarginsZero: true, Spacing: 8},
 						Children: []Widget{
-							PushButton{Text: "Open received files", OnClicked: func() { openFolder(inboxDir()) }},
-							PushButton{Text: "Open send folder", OnClicked: func() { openFolder(outboxDir()) }},
+							auroraButton("Open received files", false, func() { openFolder(inboxDir()) }),
+							auroraButton("Open send folder", false, func() { openFolder(outboxDir()) }),
 						},
 					},
 					Label{Text: "Recent activity", TextColor: cMuted},
@@ -232,6 +230,9 @@ func runGUI(l net.Listener) {
 					_ = y
 				}
 				header.Invalidate()
+				for _, b := range allButtons {
+					b.Invalidate()
+				}
 			})
 		}
 	}()
