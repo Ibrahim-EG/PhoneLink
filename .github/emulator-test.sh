@@ -73,13 +73,16 @@ echo "OK phone->PC file arrived with correct content"
 adb exec-out screencap -p > shots/phone-to-pc-file.png
 # phone -> PC real clipboard listener: set the phone clipboard through the address box (type, select all, copy)
 echo "UNVERIFIED phone clipboard listener -> PC: no reliable way to copy on Android 7.0 headless, not tested"
-# notification sharing: enable the listener and post a notification
-adb shell settings put secure enabled_notification_listeners $PKG/$PKG.NotifService
-sleep 2
-if adb shell cmd notification post -t "E2E title" e2etag "E2E body" >/dev/null 2>&1; then
-  for i in $(seq 1 15); do grep -q "Notification from phone" shots/pc.log && break; sleep 1; done
-  if grep -q "E2E title" shots/pc.log; then echo "OK phone notification reached the PC"; else echo "UNVERIFIED notification: posted but the PC did not log it"; fi
-else echo "UNVERIFIED notification: this Android 7.0 image has no cmd notification post"; fi
+echo "UNVERIFIED received-file copy to a user-chosen folder: the system folder picker is not driven by this test"
+# sky motion: two frames 2 seconds apart should differ (animation). This does not prove smoothness.
+adb exec-out screencap -p > shots/motion-a.png; sleep 2; adb exec-out screencap -p > shots/motion-b.png
+if cmp -s shots/motion-a.png shots/motion-b.png; then softfail "screen identical 2s apart: no animation seen"; else echo "OK frames differ 2s apart (animation or other change, smoothness not measured)"; fi
+# touch feedback: long press with a screenshot taken while the finger is down (visual review only, not asserted)
+SZ=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1); W=${SZ%x*}; H=${SZ#*x}
+adb shell input swipe $((W/2)) $((H*6/10)) $((W/2)) $((H*6/10)) 2500 &
+sleep 1; adb exec-out screencap -p > shots/touch-down.png; wait
+echo "UNVERIFIED touch glow/ripple: frame saved at shots/touch-down.png for visual review, not asserted"
+# notification mirroring was removed from the app; nothing to test
 adb exec-out screencap -p > shots/final.png
 kill $PCPID
 echo "SUMMARY: $FAILS supported-feature checks failed (UNVERIFIED lines above are environment limits, not failures)"
