@@ -75,7 +75,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view ci-evidence --repo "${{ github.repository }}" >/dev/null 2>&1 || gh release create ci-evidence --repo "${{ github.repository }}" --prerelease --title "CI evidence (screenshots)" --notes "Screenshots from CI test runs. Not an app build."
-          for f in shots/*.png; do [ -e "$f" ] && cp "$f" "android-run${{ github.run_number }}-$(basename $f)" && gh release upload ci-evidence "android-run${{ github.run_number }}-$(basename $f)" --repo "${{ github.repository }}" --clobber; done; true
+          for f in shots/*.png shots/ui-*.txt shots/folder-find.txt; do [ -e "$f" ] && cp "$f" "android-run${{ github.run_number }}-$(basename $f)" && gh release upload ci-evidence "android-run${{ github.run_number }}-$(basename $f)" --repo "${{ github.repository }}" --clobber; done; true
   winshot:
     needs: [windows]
     runs-on: windows-latest
