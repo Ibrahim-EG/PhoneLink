@@ -55,6 +55,9 @@ if __name__ == "__main__":
         adb("shell", "input", "text", sys.argv[2])
         adb("shell", "input", "keyevent", "4")  # close keyboard
         time.sleep(1)
+    elif cmd == "focus_host":
+        if not tap(cls="android.widget.EditText"): sys.exit("no address field")
+        time.sleep(1)
     elif cmd == "tap":
         if not tap(text=sys.argv[2]): sys.exit("no button " + sys.argv[2])
     elif cmd == "code":
