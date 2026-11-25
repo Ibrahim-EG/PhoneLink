@@ -58,3 +58,32 @@ func TestRetriedTransferNotDuplicated(t *testing.T) {
 		t.Fatalf("expected 1 file, got %d", len(es))
 	}
 }
+
+func TestStableIDAndPersistentDedup(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	p := filepath.Join(t.TempDir(), "a.txt")
+	os.WriteFile(p, []byte("hello"), 0600)
+	i1, _ := os.Stat(p)
+	i2, _ := os.Stat(p)
+	if stableID(p, i1) != stableID(p, i2) {
+		t.Fatal("id not stable")
+	}
+	os.WriteFile(p, []byte("hello!"), 0600)
+	i3, _ := os.Stat(p)
+	if stableID(p, i1) == stableID(p, i3) {
+		t.Fatal("changed file kept same id")
+	}
+	// completed id survives a "restart" (state is on disk, not in memory)
+	mu.Lock()
+	cur = nil
+	mu.Unlock()
+	recvFile(Msg{T: "file", Name: "x.txt", ID: "abc", Data: base64.StdEncoding.EncodeToString([]byte("1")), Last: true})
+	if !doneHas("abc") {
+		t.Fatal("done id not persisted")
+	}
+	recvFile(Msg{T: "file", Name: "x.txt", ID: "abc", Data: base64.StdEncoding.EncodeToString([]byte("1")), Last: true})
+	es, _ := os.ReadDir(inboxDir())
+	if len(es) != 1 {
+		t.Fatalf("lost-ack retry duplicated: %d files", len(es))
+	}
+}
