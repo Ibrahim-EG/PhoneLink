@@ -93,6 +93,7 @@ func clipWatcher() {
 		same := t == lastRecv
 		mu.Unlock()
 		if t != "" && !same {
+			logln("Clipboard sent to phone (", len(t), "characters)")
 			send(Msg{T: "clip", Text: t})
 		}
 	}
@@ -129,8 +130,10 @@ func handle(c net.Conn, g *Session) {
 			mu.Lock()
 			lastRecv = m.Text
 			mu.Unlock()
+			logln("Clipboard received from phone (", len(m.Text), "characters)")
 			setClip(m.Text)
 		case "notif":
+			logln("Notification from phone:", m.App+":", m.Title)
 			go toast(m.App+": "+m.Title, m.Text)
 		case "file":
 			recvFile(m)
