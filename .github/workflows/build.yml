@@ -45,6 +45,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: emulator-screens, path: shots }
+      - name: Publish screenshots (public prerelease ci-evidence, not an app build)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view ci-evidence --repo "${{ github.repository }}" >/dev/null 2>&1 || gh release create ci-evidence --repo "${{ github.repository }}" --prerelease --title "CI evidence (screenshots)" --notes "Screenshots from CI test runs. Not an app build."
+          for f in shots/*.png; do [ -e "$f" ] && cp "$f" "android-run${{ github.run_number }}-$(basename $f)" && gh release upload ci-evidence "android-run${{ github.run_number }}-$(basename $f)" --repo "${{ github.repository }}" --clobber; done; true
   release:
     needs: [android, windows, emulator]
     if: github.ref == 'refs/heads/main'
