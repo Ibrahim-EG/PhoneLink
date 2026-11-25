@@ -20,6 +20,10 @@ class MainActivity : Activity() {
     private lateinit var codeView: TextView
     private lateinit var activity: LinearLayout
     private lateinit var disconnectBtn: Button
+    private lateinit var progressBar: ProgressBar
+    private lateinit var progressLbl: TextView
+    private lateinit var bannerView: TextView
+    private var shownBanner = 0
 
     private val blue = Color.parseColor("#6FB6FF")
     private val ink = Color.parseColor("#E4F0FF")
@@ -41,8 +45,18 @@ class MainActivity : Activity() {
     private fun button(t: String, primary: Boolean, a: () -> Unit): Button {
         val b = Button(this); b.text = t; b.isAllCaps = false; b.textSize = 15f; b.stateListAnimator = null
         b.setTextColor(if (primary) Color.parseColor("#0A0A2A") else blue)
-        b.background = if (primary) bg(blue, 12) else bg(Color.parseColor("#33000000"), 12, blue)
-        b.setOnClickListener { a() }; return b
+        val base = if (primary) bg(blue, 12) else bg(Color.parseColor("#33000000"), 12, blue)
+        val mask = bg(Color.WHITE, 12)
+        b.background = android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(Color.parseColor("#88FFFFFF")), base, mask)
+        // pressed look: shrink slightly and dim while a finger is down
+        b.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.95f).scaleY(0.95f).alpha(0.8f).setDuration(70).start()
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> v.animate().scaleX(1f).scaleY(1f).alpha(if (v.isEnabled) 1f else 0.45f).setDuration(120).start()
+            }
+            false
+        }
+        b.setOnClickListener { it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY); a() }; return b
     }
     private fun row(parent: LinearLayout, vararg bs: Button) {
         val r = LinearLayout(this); val lp0 = LinearLayout.LayoutParams(-1, -2); lp0.topMargin = dp(10); parent.addView(r, lp0)
@@ -73,6 +87,13 @@ class MainActivity : Activity() {
         dot = View(this); srow.addView(dot, LinearLayout.LayoutParams(dp(12), dp(12)))
         status = TextView(this); status.textSize = 16f; status.setTextColor(ink); status.setPadding(dp(12), 0, 0, 0)
         srow.addView(status); st.addView(srow)
+        progressLbl = TextView(this); progressLbl.textSize = 13f; progressLbl.setTextColor(muted); progressLbl.setPadding(0, dp(10), 0, dp(4)); progressLbl.visibility = View.GONE
+        st.addView(progressLbl)
+        progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); progressBar.max = 100; progressBar.visibility = View.GONE
+        st.addView(progressBar, LinearLayout.LayoutParams(-1, dp(8)))
+        bannerView = TextView(this); bannerView.textSize = 18f; bannerView.typeface = Typeface.DEFAULT_BOLD; bannerView.setTextColor(Color.WHITE)
+        bannerView.gravity = Gravity.CENTER; bannerView.setPadding(dp(12), dp(14), dp(12), dp(14)); bannerView.visibility = View.GONE
+        val blp = LinearLayout.LayoutParams(-1, -2); blp.topMargin = dp(10); st.addView(bannerView, blp)
 
         // connect
         val cc = card(root); label(cc, "PC ADDRESS")
@@ -97,6 +118,14 @@ class MainActivity : Activity() {
         row(pairCard, button("Codes match", true) { Link.approve(true) }, button("Cancel", false) { Link.approve(false) })
 
         // actions
+        val cl = card(root); label(cl, "CALL ALERTS ON PC")
+        val callInfo = TextView(this); callInfo.textSize = 13f; callInfo.setTextColor(muted); callInfo.setPadding(0, dp(6), 0, 0)
+        callInfo.text = "Shows who is calling, and missed calls, on the PC. You still answer on the phone."
+        cl.addView(callInfo)
+        row(cl, button("Allow call alerts", false) {
+            requestPermissions(arrayOf(android.Manifest.permission.READ_PHONE_STATE, android.Manifest.permission.READ_CONTACTS), 7)
+        })
+
         val ac = card(root); label(ac, "ACTIONS")
         row(ac, button("Send a file to PC", true) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE), 1)
@@ -131,6 +160,20 @@ class MainActivity : Activity() {
         val code = Link.sasCode
         pairCard.visibility = if (code != null) View.VISIBLE else View.GONE
         if (code != null) codeView.text = code
+        val pr = Link.progress
+        progressLbl.visibility = if (pr >= 0) View.VISIBLE else View.GONE; progressBar.visibility = progressLbl.visibility
+        if (pr >= 0) { progressLbl.text = Link.progressText; progressBar.progress = pr }
+        val bk = Link.bannerKind
+        if (bk != 0 && pr < 0) {
+            bannerView.text = (if (bk == 1) "\u2713  " else if (bk == 2) "!  " else "\u2717  ") + Link.bannerText
+            bannerView.background = bg(Color.parseColor(if (bk == 1) "#1E8E4E" else if (bk == 2) "#B7791F" else "#B23A48"), 12)
+            bannerView.visibility = View.VISIBLE
+            if (Link.bannerSeq != shownBanner) {
+                shownBanner = Link.bannerSeq
+                bannerView.scaleX = 0.9f; bannerView.scaleY = 0.9f; bannerView.animate().scaleX(1f).scaleY(1f).setDuration(220).start()
+                bannerView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            }
+        } else bannerView.visibility = View.GONE
         activity.removeAllViews()
         val items = Link.events.toList().take(8)
         if (items.isEmpty()) activity.addView(TextView(this).also { it.text = "Nothing yet"; it.setTextColor(muted); it.textSize = 13f })
