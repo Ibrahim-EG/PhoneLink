@@ -123,8 +123,19 @@ jobs:
           [W]::MoveWindow($p.MainWindowHandle, 0, 0, 500, 660, $true) | Out-Null
           [W]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
           Start-Sleep -Seconds 2
-          choco install ffmpeg -y --no-progress | Select-Object -Last 2
-          $ff = (Get-Command ffmpeg).Source
+          $ff = $null
+          for ($try = 1; $try -le 3 -and -not $ff; $try++) {
+            choco install ffmpeg -y --no-progress --force | Select-Object -Last 8
+            Write-Host "choco attempt $try exit code $LASTEXITCODE"
+            $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
+            $c = Get-Command ffmpeg -ErrorAction SilentlyContinue
+            if ($c) { $ff = $c.Source } else {
+              $f = Get-ChildItem C:\ProgramData\chocolatey -Recurse -Filter ffmpeg.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($f) { $ff = $f.FullName }
+            }
+          }
+          if (-not $ff) { Write-Error "ffmpeg not available after 3 install attempts (package source problem, not the app)"; exit 1 }
+          Write-Host "ffmpeg: $ff"
           $r = New-Object RECT; [W]::GetWindowRect($p.MainWindowHandle, [ref]$r) | Out-Null
           $w = $r.Right - $r.Left; $h = $r.Bottom - $r.Top; $w -= $w % 2; $h -= $h % 2
           "window rect: $($r.Left),$($r.Top) ${w}x${h}; screen: $([System.Windows.Forms.Screen]::PrimaryScreen.Bounds)"
