@@ -24,8 +24,29 @@ jobs:
       - run: cd windows && go test ./... && GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o PhoneLink.exe .
       - uses: actions/upload-artifact@v4
         with: { name: phonelink-windows, path: windows/PhoneLink.exe }
+  emulator:
+    needs: [android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: phonelink-android-apk, path: apk }
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 24
+          arch: x86
+          target: default
+          disable-animations: true
+          script: bash .github/emulator-test.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: emulator-screens, path: shots }
   release:
-    needs: [android, windows]
+    needs: [android, windows, emulator]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
