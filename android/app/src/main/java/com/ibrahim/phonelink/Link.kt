@@ -6,6 +6,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Base64
 import org.json.JSONObject
@@ -168,9 +169,17 @@ object Link {
         }
     }
 
-    fun sendNotification(app: String, title: String, text: String) {
-        if (connected) send(JSONObject().put("t", "notif").put("app", app).put("title", title).put("text", text))
-    }
+    /** Folder the user picked with the system folder picker (no storage permission). Null until chosen. */
+    fun exportTree(c: Context): Uri? = prefs(c).getString("exportTree", null)?.let { Uri.parse(it) }
+    fun setExportTree(c: Context, u: Uri) { prefs(c).edit().putString("exportTree", u.toString()).apply() }
+
+    /** Copies a received file into the chosen folder. The app-storage copy is kept either way. */
+    private fun exportCopy(c: Context, f: File): Boolean = try {
+        val tree = exportTree(c) ?: return false
+        val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+        val doc = DocumentsContract.createDocument(c.contentResolver, parent, "application/octet-stream", f.name)
+        if (doc == null) false else { c.contentResolver.openOutputStream(doc)!!.use { o -> f.inputStream().use { it.copyTo(o) } }; true }
+    } catch (e: Exception) { false }
 
     fun receivedDir(c: Context): File = File(c.getExternalFilesDir(null), "Received").also { it.mkdirs() }
 
@@ -197,7 +206,10 @@ object Link {
                 p.os.close(); rfiles.remove(name)
                 val dest = uniqueFile(receivedDir(c), name)
                 val saved = p.file.renameTo(dest)
-                if (saved) { if (id.isNotEmpty()) doneIds.add(id); setStat("Received file: ${dest.name}") } else p.file.delete()
+                if (saved) { if (id.isNotEmpty()) doneIds.add(id)
+                    val hasTree = exportTree(c) != null
+                    val copied = hasTree && exportCopy(c, dest)
+                    setStat("Received file: ${dest.name}" + (if (copied) " (also saved to your chosen folder)" else if (hasTree) " (could NOT copy to your chosen folder; kept in app storage)" else "")) } else p.file.delete()
                 Thread { send(JSONObject().put("t", "ack").put("id", id).put("name", name).put("ok", saved)) }.start()
             }
         }
