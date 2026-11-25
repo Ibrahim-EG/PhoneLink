@@ -46,7 +46,7 @@ func page(w http.ResponseWriter) {
 	c, p := connected, pending
 	uiMu.Unlock()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, `<!doctype html><meta charset=utf-8><title>PhoneLink</title><meta http-equiv=refresh content=3>
+	fmt.Fprint(w, `<!doctype html><meta charset=utf-8><title>PhoneLink</title>
 <body style="font-family:Segoe UI,Arial;max-width:640px;margin:30px auto;padding:0 14px">
 <h2>PhoneLink</h2>`)
 	if c {
@@ -70,11 +70,20 @@ func page(w http.ResponseWriter) {
 		fmt.Fprintf(w, "<li>%s</li>", html.EscapeString(es[i].Name()))
 	}
 	fmt.Fprint(w, "</ul><p style=color:#666>Clipboard text and notifications sync automatically while connected.</p>")
+	fmt.Fprint(w, `<script>var last=null;setInterval(function(){fetch('/state').then(r=>r.text()).then(function(t){
+if(last!==null&&t!==last){var f=document.querySelector('input[type=file]');if(!f||!f.files.length)location.reload();}last=t;});},2000);</script>`)
 }
 
 func startUI() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { page(w) })
+	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
+		uiMu.Lock()
+		fmt.Fprintf(w, "%v|%s", connected, pending)
+		uiMu.Unlock()
+		es, _ := os.ReadDir(inboxDir())
+		fmt.Fprintf(w, "|%d", len(es))
+	})
 	mux.HandleFunc("/pair", func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
 		uiMu.Lock()
