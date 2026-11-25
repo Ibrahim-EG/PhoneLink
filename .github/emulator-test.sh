@@ -54,6 +54,7 @@ echo -n "pc-clip-123" > "$HOME/clip-send.txt"
 logwait() { for i in $(seq 1 $2); do adb logcat -d -s PhoneLinkNote:V | grep -q "$1" && return 0; sleep 1; done; return 1; }
 if logwait "Clipboard received from PC" 30; then echo "OK PC->phone clipboard receipt logged on the phone (log receipt only)"; else cat shots/pc.log; adb logcat -d -s PhoneLinkNote:V AndroidRuntime:E | tail -40; softfail "phone did not log receipt of the PC clipboard (logcat PhoneLinkNote)"; fi
 if logwait "setPrimaryClip done" 5; then echo "OK phone applied the PC text to its clipboard (setPrimaryClip returned, logcat)"; else adb logcat -d -s PhoneLinkNote:V | tail -20; softfail "phone did not apply the PC text to its clipboard"; fi
+if adb logcat -d -s PhoneLinkNote:V | grep "connection loop ended"; then softfail "phone connection dropped while handling the PC clipboard (see line above)"; else echo "OK connection stayed up through the PC clipboard message (no connection-loop exception in logcat)"; fi
 python3 .github/e2e.py focus_host || echo "UNVERIFIED could not focus the address field for the paste check"
 adb shell input keyevent 279 # KEYCODE_PASTE into the focused address box
 sleep 1
