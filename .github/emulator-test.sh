@@ -47,7 +47,8 @@ echo "OK end to end: pairing, connect, PC->phone file with confirmation"
 
 # ---- more functions (each result is printed; hard failures only where the step is deterministic) ----
 PKG=com.ibrahim.phonelink
-softfail() { echo "RESULT FAIL: $1"; adb logcat -d | tail -40 > shots/logcat-soft-$RANDOM.txt; }
+FAILS=0
+softfail() { FAILS=$((FAILS+1)); echo "RESULT FAIL: $1"; adb logcat -d | tail -40 > shots/logcat-soft-$RANDOM.txt; }
 # PC -> phone clipboard: the phone must log receipt; then try to paste into the address box to see the real clipboard
 echo -n "pc-clip-123" > "$HOME/clip-send.txt"
 python3 .github/e2e.py wait "Clipboard received from PC" 30 || { cat shots/pc.log; softfail "phone did not receive the PC clipboard"; }
@@ -81,3 +82,5 @@ if adb shell cmd notification post -t "E2E title" e2etag "E2E body" >/dev/null 2
 else echo "UNVERIFIED notification: this Android 7.0 image has no cmd notification post"; fi
 adb exec-out screencap -p > shots/final.png
 kill $PCPID
+echo "SUMMARY: $FAILS supported-feature checks failed (UNVERIFIED lines above are environment limits, not failures)"
+[ "$FAILS" -eq 0 ] || exit 1
