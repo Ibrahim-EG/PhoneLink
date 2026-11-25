@@ -225,11 +225,11 @@ object Link {
         if (!connected) { setStat("Not connected. Connect first, then send."); return }
         Thread {
             try {
-                var name = "file"
+                var name = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "file"
                 val id = c.contentResolver.openInputStream(uri)!!.use { TransferId.ofStream(it) }
                 val wait = acks.register(id)
                 c.contentResolver.query(uri, null, null, null, null)?.use {
-                    if (it.moveToFirst()) { val i = it.getColumnIndex(OpenableColumns.DISPLAY_NAME); if (i >= 0) name = it.getString(i) }
+                    if (it.moveToFirst()) { val i = it.getColumnIndex(OpenableColumns.DISPLAY_NAME); if (i >= 0) it.getString(i)?.let { n -> if (n.isNotBlank()) name = n } }
                 }
                 c.contentResolver.openInputStream(uri)!!.use { ins ->
                     val buf = ByteArray(192 * 1024)
