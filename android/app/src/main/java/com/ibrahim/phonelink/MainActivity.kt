@@ -14,14 +14,16 @@ import android.widget.*
 class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var dot: View
+    private lateinit var aurora: AuroraView
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean { if (::aurora.isInitialized) aurora.touch(ev); return super.dispatchTouchEvent(ev) }
     private lateinit var pairCard: LinearLayout
     private lateinit var codeView: TextView
     private lateinit var activity: LinearLayout
     private lateinit var disconnectBtn: Button
 
-    private val blue = Color.parseColor("#1E6EEB")
-    private val ink = Color.parseColor("#1B2430")
-    private val muted = Color.parseColor("#6B7686")
+    private val blue = Color.parseColor("#6FB6FF")
+    private val ink = Color.parseColor("#E4F0FF")
+    private val muted = Color.parseColor("#A8B8DC")
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private fun bg(color: Int, radius: Int, stroke: Int = 0) = GradientDrawable().also {
@@ -29,7 +31,7 @@ class MainActivity : Activity() {
     }
     private fun card(parent: LinearLayout): LinearLayout {
         val c = LinearLayout(this); c.orientation = LinearLayout.VERTICAL
-        c.background = bg(Color.WHITE, 16, Color.parseColor("#E3E8F0")); c.setPadding(dp(16), dp(14), dp(16), dp(16))
+        c.background = bg(Color.parseColor("#C0120F2E"), 16, Color.parseColor("#4A4690")); c.setPadding(dp(16), dp(14), dp(16), dp(16))
         val lp = LinearLayout.LayoutParams(-1, -2); lp.topMargin = dp(12); parent.addView(c, lp); return c
     }
     private fun label(parent: LinearLayout, t: String) {
@@ -38,8 +40,8 @@ class MainActivity : Activity() {
     }
     private fun button(t: String, primary: Boolean, a: () -> Unit): Button {
         val b = Button(this); b.text = t; b.isAllCaps = false; b.textSize = 15f; b.stateListAnimator = null
-        b.setTextColor(if (primary) Color.WHITE else blue)
-        b.background = if (primary) bg(blue, 12) else bg(Color.WHITE, 12, blue)
+        b.setTextColor(if (primary) Color.parseColor("#0A0A2A") else blue)
+        b.background = if (primary) bg(blue, 12) else bg(Color.parseColor("#33000000"), 12, blue)
         b.setOnClickListener { a() }; return b
     }
     private fun row(parent: LinearLayout, vararg bs: Button) {
@@ -51,7 +53,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
-        val scroll = ScrollView(this); scroll.setBackgroundColor(Color.parseColor("#F4F6FA"))
+        val scroll = ScrollView(this); scroll.setBackgroundColor(Color.TRANSPARENT)
         val root = LinearLayout(this); root.orientation = LinearLayout.VERTICAL; root.setPadding(dp(16), dp(20), dp(16), dp(24))
         scroll.addView(root)
 
@@ -75,7 +77,7 @@ class MainActivity : Activity() {
         // connect
         val cc = card(root); label(cc, "PC ADDRESS")
         val host = EditText(this); host.hint = "e.g. 192.168.1.20"; host.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-        host.setSingleLine(); host.background = bg(Color.parseColor("#F4F6FA"), 10); host.setPadding(dp(12), dp(10), dp(12), dp(10))
+        host.setSingleLine(); host.background = bg(Color.parseColor("#990A0922"), 10); host.setTextColor(ink); host.setHintTextColor(muted); host.setPadding(dp(12), dp(10), dp(12), dp(10))
         host.setText(getSharedPreferences("link", MODE_PRIVATE).getString("host", ""))
         val hlp = LinearLayout.LayoutParams(-1, -2); hlp.topMargin = dp(6); cc.addView(host, hlp)
         val conn = button("Connect", true) {
@@ -112,14 +114,16 @@ class MainActivity : Activity() {
         val forget = button("Forget paired PC", false) { Link.forgetPc(applicationContext) }
         val flp = LinearLayout.LayoutParams(-1, dp(44)); flp.topMargin = dp(16); root.addView(forget, flp)
 
-        setContentView(scroll)
+        aurora = AuroraView(this)
+        val frame = FrameLayout(this); frame.addView(aurora, FrameLayout.LayoutParams(-1, -1)); frame.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+        setContentView(frame)
         Link.onChange = { refresh() }; refresh()
     }
 
     private fun refresh() {
         status.text = Link.status
         val ok = Link.connected
-        dot.background = bg(if (ok) Color.parseColor("#22A559") else Color.parseColor("#B5BDC9"), 6)
+        dot.background = bg(if (ok) Color.parseColor("#22A559") else Color.parseColor("#7A86A8"), 6)
         disconnectBtn.isEnabled = ok
         disconnectBtn.alpha = if (ok) 1f else 0.45f
         val code = Link.sasCode
