@@ -15,41 +15,32 @@ import java.io.FileOutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.*
-import java.security.interfaces.ECPublicKey
 import java.security.spec.*
-import java.math.BigInteger
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import javax.crypto.Cipher
-import javax.crypto.KeyAgreement
-import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.SecretKeySpec
 
-/** Single connection to the Windows app. Protocol is described in windows/crypto.go. */
+/** Single connection to the Windows app. Protocol is described in windows/crypto.go; crypto lives in Proto.kt. */
 object Link {
     const val PORT = 47800
     @Volatile var status = "Not connected"
     @Volatile var sasCode: String? = null
     @Volatile var onChange: (() -> Unit)? = null
     private var out: java.io.OutputStream? = null
-    private var key: SecretKeySpec? = null
+    private var session: Proto.Session? = null
     private var sock: Socket? = null
     private var confirm: CountDownLatch? = null
     @Volatile private var approved = false
     private val rnd = SecureRandom()
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var lastRecvClip: String? = null
-    private val rfiles = HashMap<String, FileOutputStream>()
+    private class Partial(val os: FileOutputStream, val file: File)
+    private val rfiles = HashMap<String, Partial>()
 
     private fun setStat(s: String) { status = s; main.post { onChange?.invoke() } }
 
     fun approve(ok: Boolean) { approved = ok; confirm?.countDown() }
 
     private fun prefs(c: Context) = c.getSharedPreferences("link", Context.MODE_PRIVATE)
-    private val params: ECParameterSpec by lazy {
-        val kpg = KeyPairGenerator.getInstance("EC"); kpg.initialize(ECGenParameterSpec("secp256r1"))
-        (kpg.generateKeyPair().public as ECPublicKey).params
-    }
 
     private fun myKeys(c: Context): KeyPair {
         val p = prefs(c); val kf = KeyFactory.getInstance("EC")
@@ -65,22 +56,6 @@ object Link {
         return kp
     }
 
-    private fun raw65(k: PublicKey): ByteArray {
-        val w = (k as ECPublicKey).w
-        fun fix(b: BigInteger): ByteArray { val a = b.toByteArray(); val r = ByteArray(32)
-            val n = minOf(32, a.size); System.arraycopy(a, a.size - n, r, 32 - n, n); return r }
-        return byteArrayOf(4) + fix(w.affineX) + fix(w.affineY)
-    }
-
-    private fun fromRaw65(b: ByteArray): PublicKey {
-        val x = BigInteger(1, b.copyOfRange(1, 33)); val y = BigInteger(1, b.copyOfRange(33, 65))
-        return KeyFactory.getInstance("EC").generatePublic(ECPublicKeySpec(ECPoint(x, y), params))
-    }
-
-    private fun sha(vararg parts: ByteArray): ByteArray {
-        val m = MessageDigest.getInstance("SHA-256"); parts.forEach { m.update(it) }; return m.digest()
-    }
-
     @Volatile private var wantConn = false
     @Volatile private var running = false
 
@@ -91,7 +66,7 @@ object Link {
         running = true
         Thread {
             while (wantConn) {
-                val retry = session(c, host)
+                val retry = attempt(c, host)
                 if (!retry) break
                 try { Thread.sleep(5000) } catch (_: InterruptedException) {}
             }
@@ -104,68 +79,51 @@ object Link {
     fun stop() { wantConn = false; disconnect(); setStat("Disconnected") }
 
     /** One connection attempt. Returns true when a retry makes sense. */
-    private fun session(c: Context, host: String): Boolean {
-            try {
-                disconnect()
-                setStat("Connecting...")
-                val s = Socket(); s.connect(InetSocketAddress(host, PORT), 5000); s.tcpNoDelay = true
-                sock = s
-                val kp = myKeys(c); val myPub = raw65(kp.public)
-                val nc = ByteArray(16); rnd.nextBytes(nc)
-                val os = s.getOutputStream(); val ins = DataInputStream(s.getInputStream())
-                os.write(sha("phonelink-commit".toByteArray(), myPub, nc)); os.flush()
-                val resp = ByteArray(65 + 16); ins.readFully(resp)
-                os.write(myPub + nc); os.flush()
-                val srvPub = resp.copyOfRange(0, 65); val ns = resp.copyOfRange(65, 81)
-                val ka = KeyAgreement.getInstance("ECDH"); ka.init(kp.private); ka.doPhase(fromRaw65(srvPub), true)
-                val shared = ka.generateSecret()
-                key = SecretKeySpec(sha("phonelink-v2".toByteArray(), shared, nc, ns).copyOf(16), "AES")
-                val trusted = prefs(c).getString("pc", null)
-                val srvB64 = Base64.encodeToString(srvPub, 0)
-                if (trusted != null && trusted != srvB64) { setStat("REFUSED: this PC is not the one you paired with"); s.close(); return false }
-                if (trusted == null) {
-                    val h = sha("phonelink-sas".toByteArray(), myPub, srvPub, nc, ns)
-                    val n = ((h[0].toLong() and 255) shl 24 or ((h[1].toLong() and 255) shl 16) or ((h[2].toLong() and 255) shl 8) or (h[3].toLong() and 255)) % 1000000
-                    sasCode = "%06d".format(n)
-                    approved = false; confirm = CountDownLatch(1)
-                    setStat("Compare code with PC: $sasCode")
-                    if (!confirm!!.await(90, TimeUnit.SECONDS) || !approved) { sasCode = null; setStat("Pairing cancelled"); s.close(); return false }
-                    sasCode = null
-                    prefs(c).edit().putString("pc", srvB64).apply()
-                }
-                out = os
-                send(JSONObject().put("t", "hello"))
-                setStat("Connected")
-                prefs(c).edit().putString("host", host).apply()
-                watchClipboard(c)
-                while (true) handle(c, JSONObject(String(readFrame(ins))))
-            } catch (e: Exception) {
-                setStat("Disconnected, retrying... (${e.message})")
-            } finally { out = null }
-            return true
+    private fun attempt(c: Context, host: String): Boolean {
+        try {
+            disconnect()
+            setStat("Connecting...")
+            val s = Socket(); s.connect(InetSocketAddress(host, PORT), 5000); s.tcpNoDelay = true
+            sock = s
+            val kp = myKeys(c); val myPub = Proto.raw65(kp.public)
+            val nc = ByteArray(16); rnd.nextBytes(nc)
+            val os = s.getOutputStream(); val ins = DataInputStream(s.getInputStream())
+            os.write(Proto.commit(myPub, nc)); os.flush()          // commit first ...
+            val resp = ByteArray(65 + 16); ins.readFully(resp)      // ... see the PC's key ...
+            os.write(myPub + nc); os.flush()                        // ... then reveal ours
+            val srvPub = resp.copyOfRange(0, 65); val ns = resp.copyOfRange(65, 81)
+            val shared = Proto.ecdh(kp.private, Proto.fromRaw65(srvPub))
+            val sess = Proto.Session(Proto.keyBytes(shared, nc, ns), 0)
+            val trusted = prefs(c).getString("pc", null)
+            val srvB64 = Base64.encodeToString(srvPub, 0)
+            if (trusted != null && trusted != srvB64) { setStat("REFUSED: this PC is not the one you paired with. Use Forget paired PC if you reinstalled it."); s.close(); return false }
+            if (trusted == null) {
+                sasCode = Proto.sas(myPub, srvPub, nc, ns)
+                approved = false; confirm = CountDownLatch(1)
+                setStat("Compare code with PC: $sasCode")
+                if (!confirm!!.await(90, TimeUnit.SECONDS) || !approved) { sasCode = null; setStat("Pairing cancelled"); s.close(); return false }
+                sasCode = null
+                prefs(c).edit().putString("pc", srvB64).apply()
+            }
+            session = sess; out = os
+            send(JSONObject().put("t", "hello"))
+            setStat("Connected")
+            prefs(c).edit().putString("host", host).apply()
+            watchClipboard(c)
+            while (true) handle(c, JSONObject(String(sess.read(ins))))
+        } catch (e: Exception) {
+            setStat("Disconnected, retrying... (${e.message})")
+        } finally { out = null; session = null; abortReceives() }
+        return true
     }
 
     fun disconnect() { try { sock?.close() } catch (_: Exception) {}; out = null }
     val connected get() = out != null
 
-    @Synchronized fun send(j: JSONObject) {
-        val o = out ?: return; val k = key ?: return
-        try {
-            val nonce = ByteArray(12); rnd.nextBytes(nonce)
-            val ci = Cipher.getInstance("AES/GCM/NoPadding"); ci.init(Cipher.ENCRYPT_MODE, k, GCMParameterSpec(128, nonce))
-            val ct = ci.doFinal(j.toString().toByteArray())
-            val len = 12 + ct.size
-            o.write(byteArrayOf((len shr 24).toByte(), (len shr 16).toByte(), (len shr 8).toByte(), len.toByte()) + nonce + ct)
-            o.flush()
-        } catch (e: Exception) { disconnect() }
-    }
-
-    private fun readFrame(ins: DataInputStream): ByteArray {
-        val len = ins.readInt(); if (len < 28 || len > (1 shl 20)) throw Exception("bad frame")
-        val b = ByteArray(len); ins.readFully(b)
-        val ci = Cipher.getInstance("AES/GCM/NoPadding")
-        ci.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, b, 0, 12))
-        return ci.doFinal(b, 12, len - 12)
+    /** Returns false if the message could not be written. */
+    fun send(j: JSONObject): Boolean {
+        val o = out ?: return false; val s = session ?: return false
+        return try { s.write(o, j.toString().toByteArray()); true } catch (e: Exception) { disconnect(); false }
     }
 
     private fun handle(c: Context, m: JSONObject) {
@@ -195,14 +153,34 @@ object Link {
 
     fun receivedDir(c: Context): File = File(c.getExternalFilesDir(null), "Received").also { it.mkdirs() }
 
+    private fun uniqueFile(dir: File, name: String): File {
+        var f = File(dir, name); if (!f.exists()) return f
+        val dot = name.lastIndexOf('.'); val base = if (dot > 0) name.substring(0, dot) else name; val ext = if (dot > 0) name.substring(dot) else ""
+        var i = 1; while (true) { f = File(dir, "$base ($i)$ext"); if (!f.exists()) return f; i++ }
+    }
+
+    /** Data goes to a hidden .part file; it gets its real name only after the last chunk. */
     private fun recvFile(c: Context, m: JSONObject) {
-        val name = File(m.optString("name")).name; if (name.isEmpty()) return
-        val f = rfiles.getOrPut(name) { FileOutputStream(File(receivedDir(c), name)) }
-        f.write(Base64.decode(m.optString("data"), Base64.NO_WRAP))
-        if (m.optBoolean("last")) { f.close(); rfiles.remove(name); setStat("Received file: $name") }
+        val name = File(m.optString("name")).name; if (name.isEmpty() || name.endsWith(".part")) return
+        synchronized(rfiles) {
+            val p = rfiles.getOrPut(name) { val f = File.createTempFile(".incoming-", ".part", receivedDir(c)); Partial(FileOutputStream(f), f) }
+            try { p.os.write(Base64.decode(m.optString("data"), Base64.NO_WRAP)) } catch (e: Exception) {
+                p.os.close(); p.file.delete(); rfiles.remove(name); return
+            }
+            if (m.optBoolean("last")) {
+                p.os.close(); rfiles.remove(name)
+                val dest = uniqueFile(receivedDir(c), name)
+                if (p.file.renameTo(dest)) setStat("Received file: ${dest.name}") else p.file.delete()
+            }
+        }
+    }
+
+    private fun abortReceives() {
+        synchronized(rfiles) { rfiles.values.forEach { try { it.os.close() } catch (_: Exception) {}; it.file.delete() }; rfiles.clear() }
     }
 
     fun sendFile(c: Context, uri: Uri) {
+        if (!connected) { setStat("Not connected. Connect first, then send."); return }
         Thread {
             try {
                 var name = "file"
@@ -215,8 +193,9 @@ object Link {
                         var n = 0
                         while (n < buf.size) { val r = ins.read(buf, n, buf.size - n); if (r < 0) break; n += r }
                         val last = n < buf.size
-                        send(JSONObject().put("t", "file").put("name", name)
+                        val ok = send(JSONObject().put("t", "file").put("name", name)
                             .put("data", Base64.encodeToString(buf, 0, n, Base64.NO_WRAP)).put("last", last))
+                        if (!ok) { setStat("Send interrupted (connection lost): $name. Try again after it reconnects."); return@Thread }
                         if (last) break
                     }
                 }
