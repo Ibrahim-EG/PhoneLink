@@ -99,6 +99,8 @@ object Link {
         }.start()
     }
 
+    fun forgetPc(c: Context) { stop(); prefs(c).edit().remove("pc").apply(); setStat("Forgot PC. Connect to pair again.") }
+
     fun stop() { wantConn = false; disconnect(); setStat("Disconnected") }
 
     /** One connection attempt. Returns true when a retry makes sense. */
@@ -111,8 +113,9 @@ object Link {
                 val kp = myKeys(c); val myPub = raw65(kp.public)
                 val nc = ByteArray(16); rnd.nextBytes(nc)
                 val os = s.getOutputStream(); val ins = DataInputStream(s.getInputStream())
-                os.write(myPub + nc); os.flush()
+                os.write(sha("phonelink-commit".toByteArray(), myPub, nc)); os.flush()
                 val resp = ByteArray(65 + 16); ins.readFully(resp)
+                os.write(myPub + nc); os.flush()
                 val srvPub = resp.copyOfRange(0, 65); val ns = resp.copyOfRange(65, 81)
                 val ka = KeyAgreement.getInstance("ECDH"); ka.init(kp.private); ka.doPhase(fromRaw65(srvPub), true)
                 val shared = ka.generateSecret()
@@ -121,7 +124,7 @@ object Link {
                 val srvB64 = Base64.encodeToString(srvPub, 0)
                 if (trusted != null && trusted != srvB64) { setStat("REFUSED: this PC is not the one you paired with"); s.close(); return false }
                 if (trusted == null) {
-                    val h = sha("phonelink-sas".toByteArray(), myPub, srvPub)
+                    val h = sha("phonelink-sas".toByteArray(), myPub, srvPub, nc, ns)
                     val n = ((h[0].toLong() and 255) shl 24 or ((h[1].toLong() and 255) shl 16) or ((h[2].toLong() and 255) shl 8) or (h[3].toLong() and 255)) % 1000000
                     sasCode = "%06d".format(n)
                     approved = false; confirm = CountDownLatch(1)
